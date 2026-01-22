@@ -11,6 +11,7 @@ on:
 permissions:
   contents: write
   actions: write
+  id-token: write  # Required for NuGet trusted publishing
 
 env:
   DOTNET_NOLOGO: true
@@ -71,11 +72,15 @@ jobs:
           echo "nupkg_file=${NUPKG_FILE}" >> $GITHUB_OUTPUT
           echo "## Release Version: ${VERSION}" >> $GITHUB_STEP_SUMMARY
 
+      - name: NuGet login (trusted publishing)
+        uses: nuget/login@v1
+        with:
+          user: DamianEdwards
+
       - name: Push to NuGet.org
         run: |
           dotnet nuget push ${{ steps.version.outputs.nupkg_file }} \
-            --source "https://api.nuget.org/v3/index.json" \
-            --api-key ${{ secrets.NUGET_API_KEY }}
+            --source "https://api.nuget.org/v3/index.json"
 
       - name: Create GitHub release
         env:
