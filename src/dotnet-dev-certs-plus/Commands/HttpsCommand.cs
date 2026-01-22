@@ -97,11 +97,11 @@ public static class HttpsCommand
     private static async Task<int> HandleMachineStoreAsync(bool trust, bool check, CancellationToken cancellationToken)
     {
         var certService = new DevCertService();
-        var storeService = new WindowsCertStoreService();
+        var storeService = new MachineStoreService();
 
         if (check)
         {
-            return HandleMachineStoreCheck(trust, storeService);
+            return await HandleMachineStoreCheckAsync(trust, storeService, cancellationToken);
         }
 
         // Ensure cert exists on the host
@@ -137,24 +137,24 @@ public static class HttpsCommand
             }
 
             // Import to machine store
-            Console.WriteLine("Importing to LocalMachine\\My store...");
-            if (!storeService.ImportToMachineStore(tempPath, password))
+            Console.WriteLine("Importing to machine store...");
+            if (!await storeService.ImportToMachineStoreAsync(tempPath, password, cancellationToken))
             {
-                Console.Error.WriteLine("Failed to import certificate to machine store. Ensure you are running as Administrator.");
+                Console.Error.WriteLine("Failed to import certificate to machine store. Ensure you have appropriate permissions (run as Administrator on Windows, use sudo on Linux/macOS).");
                 return 1;
             }
-            Console.WriteLine("Certificate imported to LocalMachine\\My store.");
+            Console.WriteLine("Certificate imported to machine store.");
 
             // Trust if requested
             if (trust)
             {
-                Console.WriteLine("Adding to LocalMachine\\Root store (trusting)...");
-                if (!storeService.TrustInMachineStore(tempPath, password))
+                Console.WriteLine("Trusting certificate in machine store...");
+                if (!await storeService.TrustInMachineStoreAsync(tempPath, password, cancellationToken))
                 {
-                    Console.Error.WriteLine("Failed to trust certificate in machine store. Ensure you are running as Administrator.");
+                    Console.Error.WriteLine("Failed to trust certificate in machine store. Ensure you have appropriate permissions.");
                     return 1;
                 }
-                Console.WriteLine("Certificate trusted in LocalMachine\\Root store.");
+                Console.WriteLine("Certificate trusted in machine store.");
             }
 
             Console.WriteLine("Done.");
@@ -170,29 +170,29 @@ public static class HttpsCommand
         }
     }
 
-    private static int HandleMachineStoreCheck(bool trust, WindowsCertStoreService storeService)
+    private static async Task<int> HandleMachineStoreCheckAsync(bool trust, MachineStoreService storeService, CancellationToken cancellationToken)
     {
         Console.WriteLine("Checking machine store status...");
 
-        var existsInMyStore = storeService.CheckMachineStore();
+        var exists = await storeService.CheckMachineStoreAsync(cancellationToken);
 
-        if (!existsInMyStore)
+        if (!exists)
         {
-            Console.WriteLine("Certificate not found in LocalMachine\\My store.");
+            Console.WriteLine("Certificate not found in machine store.");
             return 2;
         }
 
-        Console.WriteLine("Certificate exists in LocalMachine\\My store.");
+        Console.WriteLine("Certificate exists in machine store.");
 
         if (trust)
         {
-            var isTrusted = storeService.CheckMachineTrust();
+            var isTrusted = await storeService.CheckMachineTrustAsync(cancellationToken);
             if (!isTrusted)
             {
-                Console.WriteLine("Certificate not trusted (not in LocalMachine\\Root store).");
+                Console.WriteLine("Certificate not trusted in machine store.");
                 return 3;
             }
-            Console.WriteLine("Certificate is trusted (exists in LocalMachine\\Root store).");
+            Console.WriteLine("Certificate is trusted in machine store.");
         }
 
         return 0;

@@ -12,17 +12,17 @@ dotnet tool install --global dotnet-dev-certs-plus
 
 ### Machine Store Support (`--store machine`)
 
-Import the ASP.NET Core HTTPS development certificate to the Windows Local Machine certificate store. This is useful for:
+Import the ASP.NET Core HTTPS development certificate to the system-wide certificate store. This is useful for:
 
-- Running ASP.NET Core applications as Windows services
+- Running ASP.NET Core applications as services
 - Scenarios where the certificate needs to be available machine-wide
 - Development with IIS or other services running under different user accounts
 
 ```bash
-# Import to LocalMachine\My store
+# Import to machine store
 dotnet dev-certs-plus https --store machine
 
-# Import and trust (also adds to LocalMachine\Root)
+# Import and trust
 dotnet dev-certs-plus https --store machine --trust
 
 # Check if certificate exists in machine store
@@ -32,7 +32,15 @@ dotnet dev-certs-plus https --store machine --check
 dotnet dev-certs-plus https --store machine --check --trust
 ```
 
-> **Note:** Machine store operations require administrator privileges.
+> **Note:** Machine store operations require elevated privileges (Administrator on Windows, sudo on Linux/macOS).
+
+#### Platform-specific behavior
+
+| Platform | Import Location | Trust Location |
+|----------|-----------------|----------------|
+| Windows | `LocalMachine\My` store | `LocalMachine\Root` store |
+| Linux | `/usr/local/share/ca-certificates/` | Same (runs `update-ca-certificates`) |
+| macOS | System Keychain | System Keychain with trust settings |
 
 ### WSL Support (`--wsl`)
 
@@ -66,7 +74,7 @@ dotnet dev-certs-plus https --wsl ubuntu --check --trust
 dotnet dev-certs-plus https [options]
 
 Options:
-  --store <machine>     Import cert to the specified store (Windows only)
+  --store <machine>     Import cert to the machine store (Windows, Linux, macOS)
   --wsl [<distro>]      Import cert to WSL distro (Windows only)
   --trust               Trust the certificate
   --check               Check certificate status (don't create/import)
@@ -89,8 +97,14 @@ Options:
 
 1. Checks if the dev certificate exists on the host, creating it if necessary
 2. Exports the certificate to a temporary file
-3. Imports to `LocalMachine\My` store (with private key)
-4. If `--trust` is specified, also imports to `LocalMachine\Root` store (without private key)
+3. Imports to the system certificate store:
+   - **Windows**: `LocalMachine\My` store (with private key)
+   - **Linux**: `/usr/local/share/ca-certificates/` as PEM
+   - **macOS**: System Keychain
+4. If `--trust` is specified:
+   - **Windows**: Also imports to `LocalMachine\Root` store (without private key)
+   - **Linux**: Runs `update-ca-certificates` to update system trust
+   - **macOS**: Adds trust settings for SSL
 5. Cleans up the temporary file
 
 ### WSL
@@ -104,8 +118,11 @@ Options:
 ## Requirements
 
 - .NET 10 SDK or later
-- Windows (for machine store and WSL features)
-- Administrator privileges (for machine store operations)
+- Elevated privileges for machine store operations:
+  - **Windows**: Run as Administrator
+  - **Linux**: Use `sudo` (requires `update-ca-certificates` command)
+  - **macOS**: Use `sudo` (uses `security` command)
+- Windows only for WSL features
 - WSL with .NET SDK installed (for WSL features)
 
 ## License
