@@ -1,0 +1,174 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      version_bump:
+        description: 'Version bump type'
+        required: false
+        default: 'none'
+        type: choice
+        options:
+          - none
+          - patch
+          - minor
+          - major
+
+permissions:
+  contents: write
+  packages: write
+
+env:
+  DOTNET_NOLOGO: true
+  DOTNET_SKIP_FIRST_TIME_EXPERIENCE: true
+  DOTNET_CLI_TELEMETRY_OPTOUT: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      dev_version: ${{ steps.version.outputs.dev_version }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+          dotnet-quality: 'preview'
+
+      - name: Calculate version
+        id: version
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # Get the latest stable release version (non-prerelease, non-draft)
+          LATEST_VERSION=$(gh release list --exclude-drafts --exclude-pre-releases --limit 1 --json tagName --jq '.[0].tagName // empty' | sed 's/^v//')
+
+          if [ -z "$LATEST_VERSION" ]; then
+            # No stable release yet, start with 0.0.1
+            MAJOR=0
+            MINOR=0
+            PATCH=1
+          else
+            # Parse the version
+            IFS='.' read -r MAJOR MINOR PATCH <<< "$LATEST_VERSION"
+            # Increment patch by default
+            PATCH=$((PATCH + 1))
+          fi
+
+          # Apply version bump if requested
+          BUMP="${{ github.event.inputs.version_bump }}"
+          case "$BUMP" in
+            major)
+              MAJOR=$((MAJOR + 1))
+              MINOR=0
+              PATCH=0
+              ;;
+            minor)
+              MINOR=$((MINOR + 1))
+              PATCH=0
+              ;;
+            patch)
+              # Already incremented patch above, but if explicit patch bump after a release
+              # we want to ensure we're moving forward
+              ;;
+          esac
+
+          VERSION="${MAJOR}.${MINOR}.${PATCH}"
+          SHORT_SHA="${GITHUB_SHA:0:7}"
+          DEV_VERSION="${VERSION}-dev.${GITHUB_RUN_NUMBER}+${SHORT_SHA}"
+
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+          echo "dev_version=${DEV_VERSION}" >> $GITHUB_OUTPUT
+
+          echo "## Version Information" >> $GITHUB_STEP_SUMMARY
+          echo "- **Stable (RC) Version:** ${VERSION}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Dev Version:** ${DEV_VERSION}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Previous Stable:** ${LATEST_VERSION:-'(none)'}" >> $GITHUB_STEP_SUMMARY
+
+      - name: Restore
+        run: dotnet restore src/dotnet-dev-certs-plus/dotnet-dev-certs-plus.csproj
+
+      - name: Build
+        run: dotnet build src/dotnet-dev-certs-plus/dotnet-dev-certs-plus.csproj --configuration Release --no-restore
+
+      - name: Pack dev version
+        run: |
+          dotnet pack src/dotnet-dev-certs-plus/dotnet-dev-certs-plus.csproj \
+            --configuration Release \
+            --no-build \
+            --output ./artifacts/dev \
+            -p:PackageVersion=${{ steps.version.outputs.dev_version }}
+
+      - name: Pack release candidate version
+        run: |
+          dotnet pack src/dotnet-dev-certs-plus/dotnet-dev-certs-plus.csproj \
+            --configuration Release \
+            --no-build \
+            --output ./artifacts/rc \
+            -p:PackageVersion=${{ steps.version.outputs.version }}
+
+      - name: Upload dev package artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: dev-package
+          path: ./artifacts/dev/*.nupkg
+          retention-days: 30
+
+      - name: Upload release candidate artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: rc-package
+          path: ./artifacts/rc/*.nupkg
+          retention-days: 90
+
+      - name: Push dev package to GitHub Packages
+        run: |
+          dotnet nuget push ./artifacts/dev/*.nupkg \
+            --source "https://nuget.pkg.github.com/${{ github.repository_owner }}/index.json" \
+            --api-key ${{ secrets.GITHUB_TOKEN }} \
+            --skip-duplicate
+
+      - name: Update dev draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # Check if dev release exists
+          if gh release view dev --json isDraft &>/dev/null; then
+            # Delete existing dev release
+            gh release delete dev --yes
+          fi
+
+          # Create new dev draft release
+          gh release create dev \
+            --draft \
+            --prerelease \
+            --title "Development Build" \
+            --notes "## Development Build
+
+          **Version:** ${{ steps.version.outputs.dev_version }}
+          **Commit:** ${{ github.sha }}
+          **Build:** [#${{ github.run_number }}](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
+
+          This is an automatically updated pre-release containing the latest development build.
+
+          ### Installation
+
+          \`\`\`bash
+          dotnet tool install --global dotnet-dev-certs-plus --version ${{ steps.version.outputs.dev_version }} --add-source https://nuget.pkg.github.com/${{ github.repository_owner }}/index.json
+          \`\`\`
+
+          ### Release Candidate
+
+          The stable version \`${{ steps.version.outputs.version }}\` is available as a release candidate in the workflow artifacts.
+          " \
+            ./artifacts/dev/*.nupkg
