@@ -19,7 +19,12 @@
     <PackageProjectUrl>https://github.com/DamianEdwards/dotnet-dev-certs-plus</PackageProjectUrl>
     <RepositoryUrl>https://github.com/DamianEdwards/dotnet-dev-certs-plus</RepositoryUrl>
     <RepositoryType>git</RepositoryType>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
   </PropertyGroup>
+
+  <ItemGroup>
+    <None Include="..\..\README.md" Pack="true" PackagePath="\" />
+  </ItemGroup>
 
   <ItemGroup>
     <PackageReference Include="System.CommandLine" Version="2.0.0-beta5.25306.1" />
