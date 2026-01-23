@@ -305,13 +305,15 @@ jobs:
 
       - name: NuGet login (trusted publishing)
         uses: nuget/login@v1
+        id: nuget-login
         with:
           user: DamianEdwards
 
       - name: Push to NuGet.org
         run: |
           dotnet nuget push ./artifacts/*.nupkg \
-            --source "https://api.nuget.org/v3/index.json"
+            --source "https://api.nuget.org/v3/index.json" \
+            --api-key ${{ steps.nuget-login.outputs.NUGET_API_KEY }}
 
       - name: Create GitHub release (prerelease)
         if: needs.build.outputs.release_type == 'prerelease'
