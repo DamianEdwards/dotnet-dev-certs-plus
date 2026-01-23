@@ -365,6 +365,12 @@ jobs:
         run: |
           VERSION="${{ needs.build.outputs.version }}"
 
+          # Skip if release already exists (retry scenario)
+          if gh release view "v${VERSION}" --repo ${{ github.repository }} &>/dev/null; then
+            echo "Release v${VERSION} already exists, skipping creation"
+            exit 0
+          fi
+
           gh release create "v${VERSION}" \
             --repo ${{ github.repository }} \
             --prerelease \
@@ -391,6 +397,12 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           VERSION="${{ needs.build.outputs.version }}"
+
+          # Skip if release already exists (retry scenario)
+          if gh release view "v${VERSION}" --repo ${{ github.repository }} &>/dev/null; then
+            echo "Release v${VERSION} already exists, skipping creation"
+            exit 0
+          fi
 
           gh release create "v${VERSION}" \
             --repo ${{ github.repository }} \
