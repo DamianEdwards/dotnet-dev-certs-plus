@@ -5,6 +5,16 @@ on:
     branches: [main]
   workflow_dispatch:
     inputs:
+      release_type:
+        description: 'Release type'
+        required: false
+        default: 'none'
+        type: choice
+        options:
+          - none
+          - prerelease
+          - rtm
+          - stable
       version_bump:
         description: 'Version bump type'
         required: false
@@ -19,6 +29,7 @@ on:
 permissions:
   contents: write
   packages: write
+  id-token: write  # Required for NuGet trusted publishing
 
 env:
   DOTNET_NOLOGO: true
@@ -31,7 +42,8 @@ jobs:
 
     outputs:
       version: ${{ steps.version.outputs.version }}
-      dev_version: ${{ steps.version.outputs.dev_version }}
+      base_version: ${{ steps.version.outputs.base_version }}
+      is_release: ${{ steps.version.outputs.is_release }}
 
     steps:
       - name: Checkout
@@ -49,51 +61,147 @@ jobs:
         id: version
         env:
           GH_TOKEN: ${{ github.token }}
+          RELEASE_TYPE: ${{ github.event.inputs.release_type || 'none' }}
+          VERSION_BUMP: ${{ github.event.inputs.version_bump || 'none' }}
         run: |
-          # Get the latest stable release version (non-prerelease, non-draft)
-          LATEST_VERSION=$(gh release list --exclude-drafts --exclude-pre-releases --limit 1 --json tagName --jq '.[0].tagName // empty' | sed 's/^v//')
+          set -e
 
-          if [ -z "$LATEST_VERSION" ]; then
-            # No stable release yet, start with 0.0.1
-            MAJOR=0
-            MINOR=0
-            PATCH=1
+          # Initialize defaults
+          MAJOR=0
+          MINOR=0
+          PATCH=1
+          STAGE="pre"
+          PRE_NUMBER=1
+          DEV_NUMBER=0
+
+          # Try to read state from dev draft release body
+          DEV_RELEASE_BODY=$(gh release view dev --json body --jq '.body // empty' 2>/dev/null || echo "")
+
+          if [ -n "$DEV_RELEASE_BODY" ]; then
+            # Parse version state from release body (stored as HTML comments)
+            # Format: <!-- VERSION_STATE: major.minor.patch|stage|pre_number|dev_number -->
+            STATE_LINE=$(echo "$DEV_RELEASE_BODY" | grep -o '<!-- VERSION_STATE: [^>]* -->' | head -1 || echo "")
+            if [ -n "$STATE_LINE" ]; then
+              STATE_DATA=$(echo "$STATE_LINE" | sed 's/<!-- VERSION_STATE: \(.*\) -->/\1/')
+              IFS='|' read -r BASE_VER STAGE PRE_NUMBER DEV_NUMBER <<< "$STATE_DATA"
+              IFS='.' read -r MAJOR MINOR PATCH <<< "$BASE_VER"
+              echo "Read state from dev release: $MAJOR.$MINOR.$PATCH, stage=$STAGE, pre=$PRE_NUMBER, dev=$DEV_NUMBER"
+            fi
           else
-            # Parse the version
-            IFS='.' read -r MAJOR MINOR PATCH <<< "$LATEST_VERSION"
-            # Increment patch by default
-            PATCH=$((PATCH + 1))
+            # No dev release, check for latest stable release to determine base version
+            LATEST_STABLE=$(gh release list --exclude-drafts --exclude-pre-releases --limit 1 --json tagName --jq '.[0].tagName // empty' | sed 's/^v//')
+            if [ -n "$LATEST_STABLE" ]; then
+              IFS='.' read -r MAJOR MINOR PATCH <<< "$LATEST_STABLE"
+              # Bump for next version
+              if [ "$MAJOR" -eq 0 ]; then
+                PATCH=$((PATCH + 1))
+              else
+                MINOR=$((MINOR + 1))
+                PATCH=0
+              fi
+            fi
+            echo "Initialized from stable release or defaults: $MAJOR.$MINOR.$PATCH"
           fi
 
           # Apply version bump if requested
-          BUMP="${{ github.event.inputs.version_bump }}"
-          case "$BUMP" in
-            major)
-              MAJOR=$((MAJOR + 1))
-              MINOR=0
-              PATCH=0
+          if [ "$VERSION_BUMP" != "none" ]; then
+            case "$VERSION_BUMP" in
+              major)
+                MAJOR=$((MAJOR + 1))
+                MINOR=0
+                PATCH=0
+                ;;
+              minor)
+                if [ "$MAJOR" -eq 0 ]; then
+                  # For 0.x, minor bump is like major bump behavior
+                  MINOR=$((MINOR + 1))
+                  PATCH=0
+                else
+                  MINOR=$((MINOR + 1))
+                  PATCH=0
+                fi
+                ;;
+              patch)
+                PATCH=$((PATCH + 1))
+                ;;
+            esac
+            # Reset to pre.1.dev.1 after version bump
+            STAGE="pre"
+            PRE_NUMBER=1
+            DEV_NUMBER=0
+            echo "Applied $VERSION_BUMP bump: $MAJOR.$MINOR.$PATCH"
+          fi
+
+          BASE_VERSION="${MAJOR}.${MINOR}.${PATCH}"
+          IS_RELEASE="false"
+
+          # Determine version based on release type
+          case "$RELEASE_TYPE" in
+            prerelease)
+              # Ship pre-release to NuGet
+              VERSION="${BASE_VERSION}-pre.${PRE_NUMBER}.rel"
+              IS_RELEASE="true"
+              # State for next build: increment pre_number, reset dev
+              NEXT_PRE_NUMBER=$((PRE_NUMBER + 1))
+              NEXT_DEV_NUMBER=1
+              NEXT_STAGE="pre"
+              echo "Pre-release: $VERSION"
               ;;
-            minor)
-              MINOR=$((MINOR + 1))
-              PATCH=0
+            rtm)
+              # Switch to RTM stage
+              STAGE="rtm"
+              DEV_NUMBER=$((DEV_NUMBER + 1))
+              VERSION="${BASE_VERSION}-rtm.dev.${DEV_NUMBER}"
+              NEXT_PRE_NUMBER=$PRE_NUMBER
+              NEXT_DEV_NUMBER=$DEV_NUMBER
+              NEXT_STAGE="rtm"
+              echo "RTM stage: $VERSION"
               ;;
-            patch)
-              # Already incremented patch above, but if explicit patch bump after a release
-              # we want to ensure we're moving forward
+            stable)
+              # Ship stable release to NuGet
+              VERSION="${BASE_VERSION}"
+              IS_RELEASE="true"
+              # State for next build: bump version, reset to pre.1.dev.1
+              if [ "$MAJOR" -eq 0 ]; then
+                PATCH=$((PATCH + 1))
+              else
+                MINOR=$((MINOR + 1))
+                PATCH=0
+              fi
+              NEXT_PRE_NUMBER=1
+              NEXT_DEV_NUMBER=1
+              NEXT_STAGE="pre"
+              BASE_VERSION="${MAJOR}.${MINOR}.${PATCH}"
+              echo "Stable release: $VERSION, next base: $BASE_VERSION"
+              ;;
+            *)
+              # Normal dev build
+              DEV_NUMBER=$((DEV_NUMBER + 1))
+              if [ "$STAGE" = "rtm" ]; then
+                VERSION="${BASE_VERSION}-rtm.dev.${DEV_NUMBER}"
+              else
+                VERSION="${BASE_VERSION}-pre.${PRE_NUMBER}.dev.${DEV_NUMBER}"
+              fi
+              NEXT_PRE_NUMBER=$PRE_NUMBER
+              NEXT_DEV_NUMBER=$DEV_NUMBER
+              NEXT_STAGE=$STAGE
+              echo "Dev build: $VERSION"
               ;;
           esac
 
-          VERSION="${MAJOR}.${MINOR}.${PATCH}"
-          SHORT_SHA="${GITHUB_SHA:0:7}"
-          DEV_VERSION="${VERSION}-dev.${GITHUB_RUN_NUMBER}+${SHORT_SHA}"
-
+          # Output version info
           echo "version=${VERSION}" >> $GITHUB_OUTPUT
-          echo "dev_version=${DEV_VERSION}" >> $GITHUB_OUTPUT
+          echo "base_version=${BASE_VERSION}" >> $GITHUB_OUTPUT
+          echo "is_release=${IS_RELEASE}" >> $GITHUB_OUTPUT
+          echo "next_state=${BASE_VERSION}|${NEXT_STAGE}|${NEXT_PRE_NUMBER}|${NEXT_DEV_NUMBER}" >> $GITHUB_OUTPUT
+          echo "release_type=${RELEASE_TYPE}" >> $GITHUB_OUTPUT
 
+          # Summary
           echo "## Version Information" >> $GITHUB_STEP_SUMMARY
-          echo "- **Stable (RC) Version:** ${VERSION}" >> $GITHUB_STEP_SUMMARY
-          echo "- **Dev Version:** ${DEV_VERSION}" >> $GITHUB_STEP_SUMMARY
-          echo "- **Previous Stable:** ${LATEST_VERSION:-'(none)'}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Version:** ${VERSION}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Base Version:** ${BASE_VERSION}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Release Type:** ${RELEASE_TYPE}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Is Release:** ${IS_RELEASE}" >> $GITHUB_STEP_SUMMARY
 
       - name: Restore
         run: dotnet restore src/dotnet-dev-certs-plus/dotnet-dev-certs-plus.csproj
@@ -101,61 +209,132 @@ jobs:
       - name: Build
         run: dotnet build src/dotnet-dev-certs-plus/dotnet-dev-certs-plus.csproj --configuration Release --no-restore
 
-      - name: Pack dev version
+      - name: Pack
         run: |
           dotnet pack src/dotnet-dev-certs-plus/dotnet-dev-certs-plus.csproj \
             --configuration Release \
             --no-build \
-            --output ./artifacts/dev \
-            -p:PackageVersion=${{ steps.version.outputs.dev_version }}
-
-      - name: Pack release candidate version
-        run: |
-          dotnet pack src/dotnet-dev-certs-plus/dotnet-dev-certs-plus.csproj \
-            --configuration Release \
-            --no-build \
-            --output ./artifacts/rc \
+            --output ./artifacts \
             -p:PackageVersion=${{ steps.version.outputs.version }}
 
-      - name: Upload dev package artifact
+      - name: Upload package artifact
         uses: actions/upload-artifact@v4
         with:
-          name: dev-package
-          path: ./artifacts/dev/*.nupkg
-          retention-days: 30
-
-      - name: Upload release candidate artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: rc-package
-          path: ./artifacts/rc/*.nupkg
+          name: package
+          path: ./artifacts/*.nupkg
           retention-days: 90
 
-      - name: Push dev package to GitHub Packages
+      - name: Push to GitHub Packages (dev builds only)
+        if: steps.version.outputs.is_release != 'true'
         run: |
-          dotnet nuget push ./artifacts/dev/*.nupkg \
+          dotnet nuget push ./artifacts/*.nupkg \
             --source "https://nuget.pkg.github.com/${{ github.repository_owner }}/index.json" \
             --api-key ${{ secrets.GITHUB_TOKEN }} \
             --skip-duplicate
+
+      - name: NuGet login (releases only)
+        if: steps.version.outputs.is_release == 'true'
+        uses: nuget/login@v1
+        with:
+          user: DamianEdwards
+
+      - name: Push to NuGet.org (releases only)
+        if: steps.version.outputs.is_release == 'true'
+        run: |
+          dotnet nuget push ./artifacts/*.nupkg \
+            --source "https://api.nuget.org/v3/index.json"
+
+      - name: Create GitHub release (prerelease)
+        if: github.event.inputs.release_type == 'prerelease'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+
+          gh release create "v${VERSION}" \
+            --prerelease \
+            --title "v${VERSION}" \
+            --notes "## dotnet-dev-certs-plus ${VERSION}
+
+          This is a **pre-release** version.
+
+          ### Installation
+
+          \`\`\`bash
+          dotnet tool install --global dotnet-dev-certs-plus --version ${VERSION}
+          \`\`\`
+
+          ### Package
+
+          - [NuGet.org](https://www.nuget.org/packages/dotnet-dev-certs-plus/${VERSION})
+          " \
+            ./artifacts/*.nupkg
+
+      - name: Create GitHub release (stable)
+        if: github.event.inputs.release_type == 'stable'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+
+          gh release create "v${VERSION}" \
+            --title "v${VERSION}" \
+            --notes "## dotnet-dev-certs-plus v${VERSION}
+
+          ### Installation
+
+          \`\`\`bash
+          dotnet tool install --global dotnet-dev-certs-plus
+          \`\`\`
+
+          Or update an existing installation:
+
+          \`\`\`bash
+          dotnet tool update --global dotnet-dev-certs-plus
+          \`\`\`
+
+          ### What's New
+
+          See the [commit history](https://github.com/${{ github.repository }}/commits/main) for changes in this release.
+
+          ### Package
+
+          - [NuGet.org](https://www.nuget.org/packages/dotnet-dev-certs-plus/${VERSION})
+          " \
+            ./artifacts/*.nupkg
 
       - name: Update dev draft release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          # Check if dev release exists
+          VERSION="${{ steps.version.outputs.version }}"
+          NEXT_STATE="${{ steps.version.outputs.next_state }}"
+          IS_RELEASE="${{ steps.version.outputs.is_release }}"
+
+          # Delete existing dev release if exists
           if gh release view dev --json isDraft &>/dev/null; then
-            # Delete existing dev release
             gh release delete dev --yes
           fi
 
-          # Create new dev draft release
+          # Determine install command based on whether this is a release
+          if [ "$IS_RELEASE" = "true" ]; then
+            INSTALL_NOTE="Latest dev build will be available after the next push to main."
+            ASSET_NOTE=""
+          else
+            INSTALL_NOTE="\`\`\`bash
+          dotnet tool install --global dotnet-dev-certs-plus --version ${VERSION} --add-source https://nuget.pkg.github.com/${{ github.repository_owner }}/index.json
+          \`\`\`"
+            ASSET_NOTE="./artifacts/*.nupkg"
+          fi
+
+          # Create new dev draft release with state in body
           gh release create dev \
             --draft \
             --prerelease \
             --title "Development Build" \
             --notes "## Development Build
 
-          **Version:** ${{ steps.version.outputs.dev_version }}
+          **Version:** ${VERSION}
           **Commit:** ${{ github.sha }}
           **Build:** [#${{ github.run_number }}](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
 
@@ -163,12 +342,8 @@ jobs:
 
           ### Installation
 
-          \`\`\`bash
-          dotnet tool install --global dotnet-dev-certs-plus --version ${{ steps.version.outputs.dev_version }} --add-source https://nuget.pkg.github.com/${{ github.repository_owner }}/index.json
-          \`\`\`
+          ${INSTALL_NOTE}
 
-          ### Release Candidate
-
-          The stable version \`${{ steps.version.outputs.version }}\` is available as a release candidate in the workflow artifacts.
+          <!-- VERSION_STATE: ${NEXT_STATE} -->
           " \
-            ./artifacts/dev/*.nupkg
+            $ASSET_NOTE
