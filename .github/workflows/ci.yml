@@ -355,7 +355,8 @@ jobs:
         run: |
           dotnet nuget push ./artifacts/*.nupkg \
             --source "https://api.nuget.org/v3/index.json" \
-            --api-key ${{ steps.nuget-login.outputs.NUGET_API_KEY }}
+            --api-key ${{ steps.nuget-login.outputs.NUGET_API_KEY }} \
+            --skip-duplicate
 
       - name: Create GitHub release (prerelease)
         if: needs.build.outputs.release_type == 'prerelease'
