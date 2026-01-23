@@ -1,5 +1,6 @@
 using System.Runtime.InteropServices;
 using System.Security.Cryptography.X509Certificates;
+using DotnetDevCertsPlus.Models;
 
 namespace DotnetDevCertsPlus.Services;
 
@@ -14,6 +15,7 @@ public class MachineStoreService
     // Linux paths
     private const string LinuxCertDir = "/usr/local/share/ca-certificates";
     private const string LinuxCertPath = $"{LinuxCertDir}/{CertFileName}";
+    private const string LinuxTrustedCertPath = $"/etc/ssl/certs/{CertFileName}";
 
     /// <summary>
     /// Checks if the dev certificate exists in the machine store.
@@ -117,6 +119,27 @@ public class MachineStoreService
         else if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
         {
             return await CleanMacOSSystemKeychainAsync(cancellationToken);
+        }
+
+        throw new PlatformNotSupportedException("Unsupported operating system.");
+    }
+
+    /// <summary>
+    /// Gets certificate information from the machine store for JSON output.
+    /// </summary>
+    public async Task<CertificateInfo?> GetCertificateInfoAsync(CancellationToken cancellationToken = default)
+    {
+        if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+        {
+            return GetWindowsCertificateInfo();
+        }
+        else if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
+        {
+            return await GetLinuxCertificateInfoAsync(cancellationToken);
+        }
+        else if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
+        {
+            return await GetMacOSCertificateInfoAsync(cancellationToken);
         }
 
         throw new PlatformNotSupportedException("Unsupported operating system.");
@@ -247,6 +270,25 @@ public class MachineStoreService
         return myStoreSuccess || rootStoreSuccess;
     }
 
+    private CertificateInfo? GetWindowsCertificateInfo()
+    {
+        using var myStore = new X509Store(StoreName.My, StoreLocation.LocalMachine);
+        myStore.Open(OpenFlags.ReadOnly);
+        var cert = FindDevCert(myStore);
+
+        if (cert is null)
+        {
+            return null;
+        }
+
+        // Check if trusted (in Root store)
+        using var rootStore = new X509Store(StoreName.Root, StoreLocation.LocalMachine);
+        rootStore.Open(OpenFlags.ReadOnly);
+        var isTrusted = FindDevCert(rootStore) is not null;
+
+        return CertificateInfo.FromCertificate(cert, isTrusted);
+    }
+
     #endregion
 
     #region Linux Implementation
@@ -314,6 +356,38 @@ public class MachineStoreService
         catch
         {
             return false;
+        }
+    }
+
+    private async Task<CertificateInfo?> GetLinuxCertificateInfoAsync(CancellationToken cancellationToken)
+    {
+        if (!File.Exists(LinuxCertPath))
+        {
+            return null;
+        }
+
+        try
+        {
+            // Read the PEM certificate
+            var pemContent = await File.ReadAllTextAsync(LinuxCertPath, cancellationToken);
+            var cert = X509CertificateLoader.LoadCertificate(Convert.FromBase64String(
+                pemContent
+                    .Replace("-----BEGIN CERTIFICATE-----", "")
+                    .Replace("-----END CERTIFICATE-----", "")
+                    .Replace("\n", "")
+                    .Replace("\r", "")
+                    .Trim()));
+
+            // Check if the certificate is actually trusted by verifying it exists in /etc/ssl/certs/
+            // (created by update-ca-certificates)
+            var isTrusted = File.Exists(LinuxTrustedCertPath) ||
+                            File.Exists($"/etc/ssl/certs/{cert.Thumbprint}.0"); // Alternative symlink format
+
+            return CertificateInfo.FromCertificate(cert, isTrusted);
+        }
+        catch
+        {
+            return null;
         }
     }
 
@@ -409,6 +483,41 @@ public class MachineStoreService
         catch
         {
             return false;
+        }
+    }
+
+    private async Task<CertificateInfo?> GetMacOSCertificateInfoAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            var exportResult = await ProcessRunner.RunAsync(
+                "security",
+                $"find-certificate -c \"localhost\" -p /Library/Keychains/System.keychain",
+                cancellationToken);
+
+            if (!exportResult.Success || string.IsNullOrWhiteSpace(exportResult.StandardOutput))
+            {
+                return null;
+            }
+
+            // Parse PEM output
+            var pemContent = exportResult.StandardOutput;
+            var cert = X509CertificateLoader.LoadCertificate(Convert.FromBase64String(
+                pemContent
+                    .Replace("-----BEGIN CERTIFICATE-----", "")
+                    .Replace("-----END CERTIFICATE-----", "")
+                    .Replace("\n", "")
+                    .Replace("\r", "")
+                    .Trim()));
+
+            // Check trust settings
+            var isTrusted = await CheckMacOSTrustSettingsAsync(cancellationToken);
+
+            return CertificateInfo.FromCertificate(cert, isTrusted);
+        }
+        catch
+        {
+            return null;
         }
     }
 

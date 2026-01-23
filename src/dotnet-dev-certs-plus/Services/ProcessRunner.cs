@@ -37,6 +37,29 @@ public static class ProcessRunner
 
         return new ProcessResult(process.ExitCode, output, error);
     }
+
+    /// <summary>
+    /// Escapes a string for safe use as a command-line argument.
+    /// </summary>
+    public static string EscapeArgument(string argument)
+    {
+        if (string.IsNullOrEmpty(argument))
+        {
+            return "\"\"";
+        }
+
+        // If the argument contains spaces, quotes, or special characters, wrap in quotes and escape internal quotes
+        if (argument.Contains(' ') || argument.Contains('"') || argument.Contains('\\'))
+        {
+            // Escape backslashes before quotes and escape quotes
+            var escaped = argument
+                .Replace("\\", "\\\\")
+                .Replace("\"", "\\\"");
+            return $"\"{escaped}\"";
+        }
+
+        return argument;
+    }
 }
 
 public record ProcessResult(int ExitCode, string StandardOutput, string StandardError)

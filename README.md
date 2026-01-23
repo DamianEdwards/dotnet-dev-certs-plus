@@ -1,6 +1,6 @@
 # dotnet-dev-certs-plus
 
-Extended functionality for the `dotnet dev-certs` command, including machine store and WSL support.
+Extended functionality for the `dotnet dev-certs` command, including machine store and WSL support. This tool is a drop-in replacement for `dotnet dev-certs https` - all standard options are supported by passing through to the underlying command.
 
 ## Installation
 
@@ -9,6 +9,33 @@ dotnet tool install --global dotnet-dev-certs-plus
 ```
 
 ## Features
+
+### Full `dotnet dev-certs https` Compatibility
+
+All standard `dotnet dev-certs https` options are supported. When no extended options (`--store` or `--wsl`) are specified, commands pass through directly to `dotnet dev-certs https`:
+
+```bash
+# Check if certificate exists
+dotnet dev-certs-plus https --check
+
+# Create and trust certificate
+dotnet dev-certs-plus https --trust
+
+# Export certificate to a file
+dotnet dev-certs-plus https --export-path ./cert.pfx --password mypassword
+
+# Export as PEM without password
+dotnet dev-certs-plus https --export-path ./cert.pem --format Pem --no-password
+
+# Import a certificate
+dotnet dev-certs-plus https --import ./cert.pfx --password mypassword
+
+# Clean all certificates
+dotnet dev-certs-plus https --clean
+
+# Check with machine-readable output
+dotnet dev-certs-plus https --check-trust-machine-readable
+```
 
 ### Machine Store Support (`--store machine`)
 
@@ -30,6 +57,9 @@ dotnet dev-certs-plus https --store machine --check
 
 # Check if certificate exists and is trusted
 dotnet dev-certs-plus https --store machine --check --trust
+
+# Get certificate status as JSON (for automation)
+dotnet dev-certs-plus https --store machine --check-trust-machine-readable
 
 # Remove certificate from machine store
 dotnet dev-certs-plus https --store machine --clean
@@ -71,6 +101,9 @@ dotnet dev-certs-plus https --wsl --check
 # Check in specific distribution
 dotnet dev-certs-plus https --wsl ubuntu --check --trust
 
+# Get certificate status as JSON (for automation)
+dotnet dev-certs-plus https --wsl --check-trust-machine-readable
+
 # Remove certificate from default WSL distribution
 dotnet dev-certs-plus https --wsl --clean
 
@@ -88,14 +121,25 @@ dotnet dev-certs-plus https --wsl --clean --force
 ```
 dotnet dev-certs-plus https [options]
 
-Options:
-  --store <machine>     Import cert to the machine store (Windows, Linux, macOS)
-  --wsl [<distro>]      Import cert to WSL distro (Windows only)
-  --trust               Trust the certificate
-  --check               Check certificate status (don't create/import)
-  --clean               Remove certificate from the specified store or WSL distro
-  --force               Skip confirmation prompt when cleaning
-  -h, --help            Show help
+Standard Options (passed through to dotnet dev-certs https):
+  -ep, --export-path <path>       Full path to the exported certificate
+  -p, --password <password>       Password for PFX export or PEM key encryption
+  -np, --no-password              No password for PEM export
+  --format <Pfx|Pem>              Export format (default: Pfx)
+  -i, --import <path>             Import certificate from file
+  -c, --check                     Check certificate status (don't create)
+  --clean                         Remove all HTTPS development certificates
+  -t, --trust                     Trust the certificate
+  -v, --verbose                   Display more debug information
+  -q, --quiet                     Display warnings and errors only
+  --check-trust-machine-readable  Output check --trust results as JSON
+
+Extended Options:
+  --store <machine>               Import cert to the machine store
+  --wsl [<distro>]                Import cert to WSL distro (Windows only)
+  --force                         Skip confirmation prompt when cleaning
+
+  -h, --help                      Show help
 ```
 
 ## Exit Codes

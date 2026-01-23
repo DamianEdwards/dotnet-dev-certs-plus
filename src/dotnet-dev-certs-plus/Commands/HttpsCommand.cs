@@ -1,14 +1,24 @@
 using System.CommandLine;
 using System.CommandLine.Parsing;
 using System.Runtime.InteropServices;
+using System.Text;
+using DotnetDevCertsPlus.Models;
 using DotnetDevCertsPlus.Services;
 
 namespace DotnetDevCertsPlus.Commands;
 
 public static class HttpsCommand
 {
+    // Exit codes matching dotnet dev-certs https behavior
+    private const int ExitCodeSuccess = 0;
+    private const int ExitCodeError = 1;
+    private const int ExitCodeCertificateNotFound = 2;
+    private const int ExitCodeCertificateNotTrusted = 3;
+    private const int ExitCodeDotnetNotAvailable = 4; // dev-certs-plus specific: dotnet CLI not available in WSL
+
     public static Command Create()
     {
+        // Extended options (dev-certs-plus specific)
         var storeOption = new Option<string?>("--store")
         {
             Description = "Import cert to the specified store (machine)",
@@ -29,51 +39,122 @@ public static class HttpsCommand
             Arity = ArgumentArity.ZeroOrOne
         };
 
-        var trustOption = new Option<bool>("--trust")
-        {
-            Description = "Trust the certificate"
-        };
-
-        var checkOption = new Option<bool>("--check")
-        {
-            Description = "Check certificate status (don't create/import)"
-        };
-
-        var cleanOption = new Option<bool>("--clean")
-        {
-            Description = "Remove the certificate from the specified store or WSL distro"
-        };
-
         var forceOption = new Option<bool>("--force")
         {
             Description = "Skip confirmation prompt when cleaning"
         };
 
+        // Standard dotnet dev-certs https options
+        var exportPathOption = new Option<string?>("--export-path")
+        {
+            Description = "Full path to the exported certificate"
+        };
+        exportPathOption.Aliases.Add("-ep");
+
+        var passwordOption = new Option<string?>("--password")
+        {
+            Description = "Password to use when exporting the certificate with the private key into a pfx file or to encrypt the Pem exported key"
+        };
+        passwordOption.Aliases.Add("-p");
+
+        var noPasswordOption = new Option<bool>("--no-password")
+        {
+            Description = "Explicitly request that you don't use a password for the key when exporting a certificate to a PEM format"
+        };
+        noPasswordOption.Aliases.Add("-np");
+
+        var checkOption = new Option<bool>("--check")
+        {
+            Description = "Check for the existence of the certificate but do not perform any action"
+        };
+        checkOption.Aliases.Add("-c");
+
+        var cleanOption = new Option<bool>("--clean")
+        {
+            Description = "Cleans all HTTPS development certificates from the machine"
+        };
+
+        var importOption = new Option<string?>("--import")
+        {
+            Description = "Imports the provided HTTPS development certificate into the machine. All other HTTPS developer certificates will be cleared out"
+        };
+        importOption.Aliases.Add("-i");
+
+        var formatOption = new Option<string?>("--format")
+        {
+            Description = "Export the certificate in the given format. Valid values are Pfx and Pem. Pfx is the default."
+        };
+        formatOption.Validators.Add(result =>
+        {
+            var value = result.GetValue(formatOption);
+            if (value is not null &&
+                !value.Equals("Pfx", StringComparison.OrdinalIgnoreCase) &&
+                !value.Equals("Pem", StringComparison.OrdinalIgnoreCase))
+            {
+                result.AddError("The format must be 'Pfx' or 'Pem'.");
+            }
+        });
+
+        var trustOption = new Option<bool>("--trust")
+        {
+            Description = "Trust the certificate on the current platform"
+        };
+        trustOption.Aliases.Add("-t");
+
+        var verboseOption = new Option<bool>("--verbose")
+        {
+            Description = "Display more debug information"
+        };
+        verboseOption.Aliases.Add("-v");
+
+        var quietOption = new Option<bool>("--quiet")
+        {
+            Description = "Display warnings and errors only"
+        };
+        quietOption.Aliases.Add("-q");
+
+        var checkTrustMachineReadableOption = new Option<bool>("--check-trust-machine-readable")
+        {
+            Description = "Same as running --check --trust, but output the results in json"
+        };
+
         var command = new Command("https", "Manage the HTTPS development certificate with extended functionality");
+
+        // Add extended options
         command.Options.Add(storeOption);
         command.Options.Add(wslOption);
-        command.Options.Add(trustOption);
+        command.Options.Add(forceOption);
+
+        // Add standard options
+        command.Options.Add(exportPathOption);
+        command.Options.Add(passwordOption);
+        command.Options.Add(noPasswordOption);
         command.Options.Add(checkOption);
         command.Options.Add(cleanOption);
-        command.Options.Add(forceOption);
+        command.Options.Add(importOption);
+        command.Options.Add(formatOption);
+        command.Options.Add(trustOption);
+        command.Options.Add(verboseOption);
+        command.Options.Add(quietOption);
+        command.Options.Add(checkTrustMachineReadableOption);
 
         command.Validators.Add(result =>
         {
-            // Check if both --store and --wsl are specified
             var hasStore = result.GetResult(storeOption) is not null;
             var hasWsl = result.GetResult(wslOption) is not null;
             var hasClean = result.GetValue(cleanOption);
             var hasCheck = result.GetValue(checkOption);
+            var hasPassword = result.GetResult(passwordOption) is not null;
+            var hasNoPassword = result.GetValue(noPasswordOption);
+            var hasImport = result.GetResult(importOption) is not null;
+            var hasExportPath = result.GetResult(exportPathOption) is not null;
+            var hasFormat = result.GetResult(formatOption) is not null;
+            var hasCheckTrustMachineReadable = result.GetValue(checkTrustMachineReadableOption);
 
+            // --store and --wsl cannot be combined
             if (hasStore && hasWsl)
             {
                 result.AddError("Options '--store' and '--wsl' cannot be combined.");
-            }
-
-            // Require at least one of --store or --wsl
-            if (!hasStore && !hasWsl)
-            {
-                result.AddError("At least one of '--store' or '--wsl' must be specified.");
             }
 
             // --clean and --check are mutually exclusive
@@ -82,75 +163,269 @@ public static class HttpsCommand
                 result.AddError("Options '--clean' and '--check' cannot be combined.");
             }
 
+            // --clean and --check-trust-machine-readable are mutually exclusive
+            if (hasClean && hasCheckTrustMachineReadable)
+            {
+                result.AddError("Options '--clean' and '--check-trust-machine-readable' cannot be combined.");
+            }
+
+            // --password and --no-password are mutually exclusive
+            if (hasPassword && hasNoPassword)
+            {
+                result.AddError("Options '--password' and '--no-password' cannot be combined.");
+            }
+
             // WSL is Windows-only
             if (hasWsl && !RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
             {
                 result.AddError("Option '--wsl' is only supported on Windows.");
             }
+
+            // When using --store or --wsl, certain passthrough-only options are not supported
+            if (hasStore || hasWsl)
+            {
+                if (hasImport)
+                {
+                    result.AddError("Option '--import' cannot be combined with '--store' or '--wsl'.");
+                }
+                if (hasExportPath)
+                {
+                    result.AddError("Option '--export-path' cannot be combined with '--store' or '--wsl'.");
+                }
+                if (hasFormat)
+                {
+                    result.AddError("Option '--format' cannot be combined with '--store' or '--wsl'.");
+                }
+                if (hasPassword)
+                {
+                    result.AddError("Option '--password' cannot be combined with '--store' or '--wsl'.");
+                }
+                if (hasNoPassword)
+                {
+                    result.AddError("Option '--no-password' cannot be combined with '--store' or '--wsl'.");
+                }
+            }
         });
 
         command.SetAction(async (parseResult, cancellationToken) =>
         {
-            var storeValue = parseResult.GetValue(storeOption);
+            var hasStore = parseResult.GetResult(storeOption) is not null;
+            var hasWsl = parseResult.GetResult(wslOption) is not null;
+
             var wslDistro = parseResult.GetValue(wslOption);
             var trust = parseResult.GetValue(trustOption);
             var check = parseResult.GetValue(checkOption);
             var clean = parseResult.GetValue(cleanOption);
             var force = parseResult.GetValue(forceOption);
+            var verbose = parseResult.GetValue(verboseOption);
+            var quiet = parseResult.GetValue(quietOption);
+            var checkTrustMachineReadable = parseResult.GetValue(checkTrustMachineReadableOption);
 
-            var hasStore = parseResult.GetResult(storeOption) is not null;
-            var hasWsl = parseResult.GetResult(wslOption) is not null;
+            var output = new OutputHelper(verbose, quiet);
 
             if (hasStore)
             {
                 if (clean)
                 {
-                    return await HandleMachineStoreCleanAsync(force, cancellationToken);
+                    return await HandleMachineStoreCleanAsync(force, output, cancellationToken);
                 }
-                return await HandleMachineStoreAsync(trust, check, cancellationToken);
+                if (checkTrustMachineReadable)
+                {
+                    return await HandleMachineStoreCheckJsonAsync(cancellationToken);
+                }
+                return await HandleMachineStoreAsync(trust, check, output, cancellationToken);
             }
             else if (hasWsl)
             {
                 if (clean)
                 {
-                    return await HandleWslCleanAsync(wslDistro, force, cancellationToken);
+                    return await HandleWslCleanAsync(wslDistro, force, output, cancellationToken);
                 }
-                return await HandleWslAsync(wslDistro, trust, check, cancellationToken);
+                if (checkTrustMachineReadable)
+                {
+                    return await HandleWslCheckJsonAsync(wslDistro, output, cancellationToken);
+                }
+                return await HandleWslAsync(wslDistro, trust, check, output, cancellationToken);
             }
-
-            return 0;
+            else
+            {
+                // Passthrough mode - forward to dotnet dev-certs https
+                return await HandlePassthroughAsync(parseResult, exportPathOption, passwordOption, noPasswordOption,
+                    checkOption, cleanOption, importOption, formatOption, trustOption, verboseOption, quietOption,
+                    checkTrustMachineReadableOption, cancellationToken);
+            }
         });
 
         return command;
     }
 
-    private static async Task<int> HandleMachineStoreAsync(bool trust, bool check, CancellationToken cancellationToken)
+    private static async Task<int> HandlePassthroughAsync(
+        ParseResult parseResult,
+        Option<string?> exportPathOption,
+        Option<string?> passwordOption,
+        Option<bool> noPasswordOption,
+        Option<bool> checkOption,
+        Option<bool> cleanOption,
+        Option<string?> importOption,
+        Option<string?> formatOption,
+        Option<bool> trustOption,
+        Option<bool> verboseOption,
+        Option<bool> quietOption,
+        Option<bool> checkTrustMachineReadableOption,
+        CancellationToken cancellationToken)
+    {
+        var args = new StringBuilder("dev-certs https");
+
+        var exportPath = parseResult.GetValue(exportPathOption);
+        if (!string.IsNullOrEmpty(exportPath))
+        {
+            args.Append($" --export-path {ProcessRunner.EscapeArgument(exportPath)}");
+        }
+
+        var password = parseResult.GetValue(passwordOption);
+        if (!string.IsNullOrEmpty(password))
+        {
+            args.Append($" --password {ProcessRunner.EscapeArgument(password)}");
+        }
+
+        if (parseResult.GetValue(noPasswordOption))
+        {
+            args.Append(" --no-password");
+        }
+
+        if (parseResult.GetValue(checkOption))
+        {
+            args.Append(" --check");
+        }
+
+        if (parseResult.GetValue(cleanOption))
+        {
+            args.Append(" --clean");
+        }
+
+        var importPath = parseResult.GetValue(importOption);
+        if (!string.IsNullOrEmpty(importPath))
+        {
+            args.Append($" --import {ProcessRunner.EscapeArgument(importPath)}");
+        }
+
+        var format = parseResult.GetValue(formatOption);
+        if (!string.IsNullOrEmpty(format))
+        {
+            args.Append($" --format {format}");
+        }
+
+        if (parseResult.GetValue(trustOption))
+        {
+            args.Append(" --trust");
+        }
+
+        if (parseResult.GetValue(verboseOption))
+        {
+            args.Append(" --verbose");
+        }
+
+        if (parseResult.GetValue(quietOption))
+        {
+            args.Append(" --quiet");
+        }
+
+        if (parseResult.GetValue(checkTrustMachineReadableOption))
+        {
+            args.Append(" --check-trust-machine-readable");
+        }
+
+        var result = await ProcessRunner.RunAsync("dotnet", args.ToString(), cancellationToken);
+
+        // Output the result directly (preserving original output)
+        if (!string.IsNullOrEmpty(result.StandardOutput))
+        {
+            Console.Write(result.StandardOutput);
+        }
+        if (!string.IsNullOrEmpty(result.StandardError))
+        {
+            Console.Error.Write(result.StandardError);
+        }
+
+        return result.ExitCode;
+    }
+
+    private static async Task<int> HandleMachineStoreCheckJsonAsync(CancellationToken cancellationToken)
+    {
+        var storeService = new MachineStoreService();
+        var certInfo = await storeService.GetCertificateInfoAsync(cancellationToken);
+
+        if (certInfo is null)
+        {
+            Console.WriteLine("[]");
+            return ExitCodeCertificateNotFound;
+        }
+
+        var json = CertificateInfo.ToJson([certInfo]);
+        Console.WriteLine(json);
+
+        return certInfo.TrustLevel == "Full" ? ExitCodeSuccess : ExitCodeCertificateNotTrusted;
+    }
+
+    private static async Task<int> HandleWslCheckJsonAsync(string? distro, OutputHelper output, CancellationToken cancellationToken)
+    {
+        var wslService = new WslService();
+
+        // Determine which distro to use
+        if (string.IsNullOrEmpty(distro))
+        {
+            distro = await wslService.GetDefaultDistroAsync(cancellationToken);
+            if (string.IsNullOrEmpty(distro))
+            {
+                Console.Error.WriteLine("No default WSL distribution found.");
+                return ExitCodeError;
+            }
+        }
+
+        // Check if dotnet is available in WSL
+        if (!await wslService.CheckDotnetAvailableAsync(distro, cancellationToken))
+        {
+            Console.Error.WriteLine($"dotnet CLI is not available in WSL distribution '{distro}'.");
+            return ExitCodeDotnetNotAvailable;
+        }
+
+        var (json, exitCode) = await wslService.GetCertificateInfoJsonAsync(distro, cancellationToken);
+
+        if (!string.IsNullOrEmpty(json))
+        {
+            Console.WriteLine(json);
+        }
+
+        return exitCode;
+    }
+
+    private static async Task<int> HandleMachineStoreAsync(bool trust, bool check, OutputHelper output, CancellationToken cancellationToken)
     {
         var certService = new DevCertService();
         var storeService = new MachineStoreService();
 
         if (check)
         {
-            return await HandleMachineStoreCheckAsync(trust, storeService, cancellationToken);
+            return await HandleMachineStoreCheckAsync(trust, storeService, output, cancellationToken);
         }
 
         // Ensure cert exists on the host
-        Console.WriteLine("Checking host dev certificate status...");
+        output.WriteLine("Checking host dev certificate status...");
         var status = await certService.CheckStatusAsync(cancellationToken);
 
         if (!status.Exists)
         {
-            Console.WriteLine("Dev certificate not found. Creating...");
+            output.WriteLine("Dev certificate not found. Creating...");
             if (!await certService.EnsureCreatedAsync(cancellationToken))
             {
-                Console.Error.WriteLine("Failed to create dev certificate.");
+                output.WriteError("Failed to create dev certificate.");
                 return 1;
             }
-            Console.WriteLine("Dev certificate created.");
+            output.WriteLine("Dev certificate created.");
         }
         else
         {
-            Console.WriteLine("Dev certificate exists.");
+            output.WriteLine("Dev certificate exists.");
         }
 
         // Export cert to temp file
@@ -159,35 +434,36 @@ public static class HttpsCommand
 
         try
         {
-            Console.WriteLine("Exporting certificate...");
+            output.WriteVerbose($"Exporting certificate to {tempPath}...");
+            output.WriteLine("Exporting certificate...");
             if (!await certService.ExportAsync(tempPath, CertificateFormat.Pfx, password, cancellationToken))
             {
-                Console.Error.WriteLine("Failed to export dev certificate.");
+                output.WriteError("Failed to export dev certificate.");
                 return 1;
             }
 
             // Import to machine store
-            Console.WriteLine("Importing to machine store...");
+            output.WriteLine("Importing to machine store...");
             if (!await storeService.ImportToMachineStoreAsync(tempPath, password, cancellationToken))
             {
-                Console.Error.WriteLine("Failed to import certificate to machine store. Ensure you have appropriate permissions (run as Administrator on Windows, use sudo on Linux/macOS).");
+                output.WriteError("Failed to import certificate to machine store. Ensure you have appropriate permissions (run as Administrator on Windows, use sudo on Linux/macOS).");
                 return 1;
             }
-            Console.WriteLine("Certificate imported to machine store.");
+            output.WriteLine("Certificate imported to machine store.");
 
             // Trust if requested
             if (trust)
             {
-                Console.WriteLine("Trusting certificate in machine store...");
+                output.WriteLine("Trusting certificate in machine store...");
                 if (!await storeService.TrustInMachineStoreAsync(tempPath, password, cancellationToken))
                 {
-                    Console.Error.WriteLine("Failed to trust certificate in machine store. Ensure you have appropriate permissions.");
+                    output.WriteError("Failed to trust certificate in machine store. Ensure you have appropriate permissions.");
                     return 1;
                 }
-                Console.WriteLine("Certificate trusted in machine store.");
+                output.WriteLine("Certificate trusted in machine store.");
             }
 
-            Console.WriteLine("Done.");
+            output.WriteLine("Done.");
             return 0;
         }
         finally
@@ -195,40 +471,41 @@ public static class HttpsCommand
             // Clean up temp file
             if (File.Exists(tempPath))
             {
+                output.WriteVerbose($"Cleaning up temporary file {tempPath}...");
                 File.Delete(tempPath);
             }
         }
     }
 
-    private static async Task<int> HandleMachineStoreCheckAsync(bool trust, MachineStoreService storeService, CancellationToken cancellationToken)
+    private static async Task<int> HandleMachineStoreCheckAsync(bool trust, MachineStoreService storeService, OutputHelper output, CancellationToken cancellationToken)
     {
-        Console.WriteLine("Checking machine store status...");
+        output.WriteLine("Checking machine store status...");
 
         var exists = await storeService.CheckMachineStoreAsync(cancellationToken);
 
         if (!exists)
         {
-            Console.WriteLine("Certificate not found in machine store.");
-            return 2;
+            output.WriteLine("Certificate not found in machine store.");
+            return ExitCodeCertificateNotFound;
         }
 
-        Console.WriteLine("Certificate exists in machine store.");
+        output.WriteLine("Certificate exists in machine store.");
 
         if (trust)
         {
             var isTrusted = await storeService.CheckMachineTrustAsync(cancellationToken);
             if (!isTrusted)
             {
-                Console.WriteLine("Certificate not trusted in machine store.");
-                return 3;
+                output.WriteLine("Certificate not trusted in machine store.");
+                return ExitCodeCertificateNotTrusted;
             }
-            Console.WriteLine("Certificate is trusted in machine store.");
+            output.WriteLine("Certificate is trusted in machine store.");
         }
 
-        return 0;
+        return ExitCodeSuccess;
     }
 
-    private static async Task<int> HandleMachineStoreCleanAsync(bool force, CancellationToken cancellationToken)
+    private static async Task<int> HandleMachineStoreCleanAsync(bool force, OutputHelper output, CancellationToken cancellationToken)
     {
         var storeService = new MachineStoreService();
 
@@ -238,23 +515,23 @@ public static class HttpsCommand
             var response = Console.ReadLine();
             if (response is null || !string.Equals(response, "y", StringComparison.OrdinalIgnoreCase))
             {
-                Console.WriteLine("Operation cancelled.");
+                output.WriteLine("Operation cancelled.");
                 return 0;
             }
         }
 
-        Console.WriteLine("Removing certificate from machine store...");
+        output.WriteLine("Removing certificate from machine store...");
         if (!await storeService.CleanMachineStoreAsync(cancellationToken))
         {
-            Console.Error.WriteLine("Failed to remove certificate from machine store. Ensure you have appropriate permissions (run as Administrator on Windows, use sudo on Linux/macOS).");
+            output.WriteError("Failed to remove certificate from machine store. Ensure you have appropriate permissions (run as Administrator on Windows, use sudo on Linux/macOS).");
             return 1;
         }
 
-        Console.WriteLine("Certificate removed from machine store.");
+        output.WriteLine("Certificate removed from machine store.");
         return 0;
     }
 
-    private static async Task<int> HandleWslAsync(string? distro, bool trust, bool check, CancellationToken cancellationToken)
+    private static async Task<int> HandleWslAsync(string? distro, bool trust, bool check, OutputHelper output, CancellationToken cancellationToken)
     {
         var certService = new DevCertService();
         var wslService = new WslService();
@@ -265,46 +542,47 @@ public static class HttpsCommand
             distro = await wslService.GetDefaultDistroAsync(cancellationToken);
             if (string.IsNullOrEmpty(distro))
             {
-                Console.Error.WriteLine("No default WSL distribution found.");
-                return 1;
+                output.WriteError("No default WSL distribution found.");
+                return ExitCodeError;
             }
-            Console.WriteLine($"Using default WSL distribution: {distro}");
+            output.WriteLine($"Using default WSL distribution: {distro}");
         }
         else
         {
-            Console.WriteLine($"Using WSL distribution: {distro}");
+            output.WriteLine($"Using WSL distribution: {distro}");
         }
 
         // Check if dotnet is available in WSL
-        Console.WriteLine("Checking if dotnet is available in WSL...");
+        output.WriteVerbose($"Checking if dotnet is available in WSL distribution '{distro}'...");
+        output.WriteLine("Checking if dotnet is available in WSL...");
         if (!await wslService.CheckDotnetAvailableAsync(distro, cancellationToken))
         {
-            Console.Error.WriteLine($"dotnet CLI is not available in WSL distribution '{distro}'.");
-            return 4;
+            output.WriteError($"dotnet CLI is not available in WSL distribution '{distro}'.");
+            return ExitCodeDotnetNotAvailable;
         }
 
         if (check)
         {
-            return await HandleWslCheckAsync(distro, trust, wslService, cancellationToken);
+            return await HandleWslCheckAsync(distro, trust, wslService, output, cancellationToken);
         }
 
         // Ensure cert exists on the Windows host
-        Console.WriteLine("Checking host dev certificate status...");
+        output.WriteLine("Checking host dev certificate status...");
         var status = await certService.CheckStatusAsync(cancellationToken);
 
         if (!status.Exists)
         {
-            Console.WriteLine("Dev certificate not found on host. Creating...");
+            output.WriteLine("Dev certificate not found on host. Creating...");
             if (!await certService.EnsureCreatedAsync(cancellationToken))
             {
-                Console.Error.WriteLine("Failed to create dev certificate.");
+                output.WriteError("Failed to create dev certificate.");
                 return 1;
             }
-            Console.WriteLine("Dev certificate created.");
+            output.WriteLine("Dev certificate created.");
         }
         else
         {
-            Console.WriteLine("Dev certificate exists on host.");
+            output.WriteLine("Dev certificate exists on host.");
         }
 
         // Export cert to temp file
@@ -313,31 +591,32 @@ public static class HttpsCommand
 
         try
         {
-            Console.WriteLine("Exporting certificate...");
+            output.WriteVerbose($"Exporting certificate to {tempPath}...");
+            output.WriteLine("Exporting certificate...");
             if (!await certService.ExportAsync(tempPath, CertificateFormat.Pfx, password, cancellationToken))
             {
-                Console.Error.WriteLine("Failed to export dev certificate.");
+                output.WriteError("Failed to export dev certificate.");
                 return 1;
             }
 
             // Import into WSL
-            Console.WriteLine($"Importing certificate into WSL ({distro})...");
+            output.WriteLine($"Importing certificate into WSL ({distro})...");
             if (!await wslService.ImportCertAsync(tempPath, password, trust, distro, cancellationToken))
             {
-                Console.Error.WriteLine("Failed to import certificate into WSL.");
+                output.WriteError("Failed to import certificate into WSL.");
                 return 1;
             }
 
             if (trust)
             {
-                Console.WriteLine("Certificate imported and trusted in WSL.");
+                output.WriteLine("Certificate imported and trusted in WSL.");
             }
             else
             {
-                Console.WriteLine("Certificate imported into WSL.");
+                output.WriteLine("Certificate imported into WSL.");
             }
 
-            Console.WriteLine("Done.");
+            output.WriteLine("Done.");
             return 0;
         }
         finally
@@ -345,39 +624,40 @@ public static class HttpsCommand
             // Clean up temp file
             if (File.Exists(tempPath))
             {
+                output.WriteVerbose($"Cleaning up temporary file {tempPath}...");
                 File.Delete(tempPath);
             }
         }
     }
 
-    private static async Task<int> HandleWslCheckAsync(string distro, bool trust, WslService wslService, CancellationToken cancellationToken)
+    private static async Task<int> HandleWslCheckAsync(string distro, bool trust, WslService wslService, OutputHelper output, CancellationToken cancellationToken)
     {
-        Console.WriteLine($"Checking certificate status in WSL ({distro})...");
+        output.WriteLine($"Checking certificate status in WSL ({distro})...");
 
         var (exists, trusted) = await wslService.CheckCertStatusAsync(distro, cancellationToken);
 
         if (!exists)
         {
-            Console.WriteLine("Certificate not found in WSL.");
-            return 2;
+            output.WriteLine("Certificate not found in WSL.");
+            return ExitCodeCertificateNotFound;
         }
 
-        Console.WriteLine("Certificate exists in WSL.");
+        output.WriteLine("Certificate exists in WSL.");
 
         if (trust)
         {
             if (!trusted)
             {
-                Console.WriteLine("Certificate not trusted in WSL.");
-                return 3;
+                output.WriteLine("Certificate not trusted in WSL.");
+                return ExitCodeCertificateNotTrusted;
             }
-            Console.WriteLine("Certificate is trusted in WSL.");
+            output.WriteLine("Certificate is trusted in WSL.");
         }
 
-        return 0;
+        return ExitCodeSuccess;
     }
 
-    private static async Task<int> HandleWslCleanAsync(string? distro, bool force, CancellationToken cancellationToken)
+    private static async Task<int> HandleWslCleanAsync(string? distro, bool force, OutputHelper output, CancellationToken cancellationToken)
     {
         var wslService = new WslService();
 
@@ -387,22 +667,23 @@ public static class HttpsCommand
             distro = await wslService.GetDefaultDistroAsync(cancellationToken);
             if (string.IsNullOrEmpty(distro))
             {
-                Console.Error.WriteLine("No default WSL distribution found.");
-                return 1;
+                output.WriteError("No default WSL distribution found.");
+                return ExitCodeError;
             }
-            Console.WriteLine($"Using default WSL distribution: {distro}");
+            output.WriteLine($"Using default WSL distribution: {distro}");
         }
         else
         {
-            Console.WriteLine($"Using WSL distribution: {distro}");
+            output.WriteLine($"Using WSL distribution: {distro}");
         }
 
         // Check if dotnet is available in WSL
-        Console.WriteLine("Checking if dotnet is available in WSL...");
+        output.WriteVerbose($"Checking if dotnet is available in WSL distribution '{distro}'...");
+        output.WriteLine("Checking if dotnet is available in WSL...");
         if (!await wslService.CheckDotnetAvailableAsync(distro, cancellationToken))
         {
-            Console.Error.WriteLine($"dotnet CLI is not available in WSL distribution '{distro}'.");
-            return 4;
+            output.WriteError($"dotnet CLI is not available in WSL distribution '{distro}'.");
+            return ExitCodeDotnetNotAvailable;
         }
 
         if (!force)
@@ -411,19 +692,46 @@ public static class HttpsCommand
             var response = Console.ReadLine();
             if (response is null || !string.Equals(response, "y", StringComparison.OrdinalIgnoreCase))
             {
-                Console.WriteLine("Operation cancelled.");
-                return 0;
+                output.WriteLine("Operation cancelled.");
+                return ExitCodeSuccess;
             }
         }
 
-        Console.WriteLine($"Removing certificate from WSL ({distro})...");
+        output.WriteLine($"Removing certificate from WSL ({distro})...");
         if (!await wslService.CleanCertAsync(distro, cancellationToken))
         {
-            Console.Error.WriteLine("Failed to remove certificate from WSL.");
-            return 1;
+            output.WriteError("Failed to remove certificate from WSL.");
+            return ExitCodeError;
         }
 
-        Console.WriteLine("Certificate removed from WSL.");
-        return 0;
+        output.WriteLine("Certificate removed from WSL.");
+        return ExitCodeSuccess;
+    }
+}
+
+/// <summary>
+/// Helper class for managing console output based on verbose/quiet settings.
+/// </summary>
+internal class OutputHelper(bool verbose, bool quiet)
+{
+    public void WriteLine(string message)
+    {
+        if (!quiet)
+        {
+            Console.WriteLine(message);
+        }
+    }
+
+    public void WriteError(string message)
+    {
+        Console.Error.WriteLine(message);
+    }
+
+    public void WriteVerbose(string message)
+    {
+        if (verbose)
+        {
+            Console.WriteLine($"[DEBUG] {message}");
+        }
     }
 }

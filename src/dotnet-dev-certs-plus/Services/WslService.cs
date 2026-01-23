@@ -104,6 +104,17 @@ public partial class WslService
     }
 
     /// <summary>
+    /// Gets certificate information in JSON format from WSL using dotnet dev-certs https --check-trust-machine-readable.
+    /// </summary>
+    public async Task<(string json, int exitCode)> GetCertificateInfoJsonAsync(
+        string? distro = null,
+        CancellationToken cancellationToken = default)
+    {
+        var result = await RunCommandAsync("dotnet dev-certs https --check-trust-machine-readable", distro, cancellationToken);
+        return (result.StandardOutput, result.ExitCode);
+    }
+
+    /// <summary>
     /// Converts a Windows path to a WSL path.
     /// </summary>
     public static string ConvertToWslPath(string windowsPath)
