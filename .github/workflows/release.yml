@@ -46,9 +46,6 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Build
-        uses: ./.github/actions/build
-
       - name: Calculate version
         id: version
         env:
@@ -235,6 +232,11 @@ jobs:
           if [ "$IS_RETRY" = "true" ]; then
             echo "- **Retry:** Yes (reusing pending version)" >> $GITHUB_STEP_SUMMARY
           fi
+
+      - name: Build
+        uses: ./.github/actions/build
+        with:
+          version: ${{ steps.version.outputs.version }}
 
       - name: Pack
         run: |

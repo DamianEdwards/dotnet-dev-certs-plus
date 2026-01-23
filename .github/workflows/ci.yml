@@ -24,30 +24,6 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Build
-        uses: ./.github/actions/build
-
-      - name: Test
-        run: dotnet test test/dotnet-dev-certs-plus.Tests --configuration Release --no-build --verbosity normal --logger "trx;LogFileName=test-results.trx" --logger "html;LogFileName=test-results.html" --results-directory ./test-results
-
-      - name: Upload test results
-        uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: test-results
-          path: |
-            ./test-results/*.trx
-            ./test-results/*.html
-          retention-days: 30
-
-      - name: Publish test results
-        uses: dorny/test-reporter@v1
-        if: always()
-        with:
-          name: Test Results
-          path: ./test-results/*.trx
-          reporter: dotnet-trx
-
       - name: Calculate version
         id: version
         env:
@@ -123,6 +99,34 @@ jobs:
           echo "## Version Information" >> $GITHUB_STEP_SUMMARY
           echo "- **Version:** ${VERSION}" >> $GITHUB_STEP_SUMMARY
           echo "- **Base Version:** ${BASE_VERSION}" >> $GITHUB_STEP_SUMMARY
+
+      - name: Build
+        if: steps.version.outputs.skip != 'true'
+        uses: ./.github/actions/build
+        with:
+          version: ${{ steps.version.outputs.version }}
+
+      - name: Test
+        if: steps.version.outputs.skip != 'true'
+        run: dotnet test test/dotnet-dev-certs-plus.Tests --configuration Release --no-build --verbosity normal --logger "trx;LogFileName=test-results.trx" --logger "html;LogFileName=test-results.html" --results-directory ./test-results
+
+      - name: Upload test results
+        uses: actions/upload-artifact@v4
+        if: always() && steps.version.outputs.skip != 'true'
+        with:
+          name: test-results
+          path: |
+            ./test-results/*.trx
+            ./test-results/*.html
+          retention-days: 30
+
+      - name: Publish test results
+        uses: dorny/test-reporter@v1
+        if: always() && steps.version.outputs.skip != 'true'
+        with:
+          name: Test Results
+          path: ./test-results/*.trx
+          reporter: dotnet-trx
 
       - name: Pack
         if: steps.version.outputs.skip != 'true'
