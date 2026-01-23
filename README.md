@@ -30,6 +30,12 @@ dotnet dev-certs-plus https --store machine --check
 
 # Check if certificate exists and is trusted
 dotnet dev-certs-plus https --store machine --check --trust
+
+# Remove certificate from machine store
+dotnet dev-certs-plus https --store machine --clean
+
+# Remove without confirmation prompt
+dotnet dev-certs-plus https --store machine --clean --force
 ```
 
 > **Note:** Machine store operations require elevated privileges (Administrator on Windows, sudo on Linux/macOS).
@@ -64,6 +70,15 @@ dotnet dev-certs-plus https --wsl --check
 
 # Check in specific distribution
 dotnet dev-certs-plus https --wsl ubuntu --check --trust
+
+# Remove certificate from default WSL distribution
+dotnet dev-certs-plus https --wsl --clean
+
+# Remove certificate from specific distribution
+dotnet dev-certs-plus https --wsl ubuntu --clean
+
+# Remove without confirmation prompt
+dotnet dev-certs-plus https --wsl --clean --force
 ```
 
 > **Note:** The `dotnet` CLI must be installed in the WSL distribution.
@@ -78,6 +93,8 @@ Options:
   --wsl [<distro>]      Import cert to WSL distro (Windows only)
   --trust               Trust the certificate
   --check               Check certificate status (don't create/import)
+  --clean               Remove certificate from the specified store or WSL distro
+  --force               Skip confirmation prompt when cleaning
   -h, --help            Show help
 ```
 

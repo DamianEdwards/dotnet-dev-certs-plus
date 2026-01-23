@@ -101,6 +101,27 @@ public class MachineStoreService
         throw new PlatformNotSupportedException("Unsupported operating system.");
     }
 
+    /// <summary>
+    /// Removes the dev certificate from the machine store and trust store.
+    /// </summary>
+    public async Task<bool> CleanMachineStoreAsync(CancellationToken cancellationToken = default)
+    {
+        if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+        {
+            return CleanWindowsMachineStore();
+        }
+        else if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
+        {
+            return await CleanLinuxMachineStoreAsync(cancellationToken);
+        }
+        else if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
+        {
+            return await CleanMacOSSystemKeychainAsync(cancellationToken);
+        }
+
+        throw new PlatformNotSupportedException("Unsupported operating system.");
+    }
+
     #region Windows Implementation
 
     private bool CheckWindowsMachineStore()
@@ -185,6 +206,47 @@ public class MachineStoreService
         return null;
     }
 
+    private bool CleanWindowsMachineStore()
+    {
+        var myStoreSuccess = true;
+        var rootStoreSuccess = true;
+
+        // Remove from LocalMachine\My
+        try
+        {
+            using var myStore = new X509Store(StoreName.My, StoreLocation.LocalMachine);
+            myStore.Open(OpenFlags.ReadWrite);
+            var cert = FindDevCert(myStore);
+            if (cert is not null)
+            {
+                myStore.Remove(cert);
+            }
+        }
+        catch
+        {
+            myStoreSuccess = false;
+        }
+
+        // Remove from LocalMachine\Root
+        try
+        {
+            using var rootStore = new X509Store(StoreName.Root, StoreLocation.LocalMachine);
+            rootStore.Open(OpenFlags.ReadWrite);
+            var cert = FindDevCert(rootStore);
+            if (cert is not null)
+            {
+                rootStore.Remove(cert);
+            }
+        }
+        catch
+        {
+            rootStoreSuccess = false;
+        }
+
+        // Return true if at least one store was cleaned successfully
+        return myStoreSuccess || rootStoreSuccess;
+    }
+
     #endregion
 
     #region Linux Implementation
@@ -227,6 +289,32 @@ public class MachineStoreService
         builder.AppendLine(Convert.ToBase64String(cert.RawData, Base64FormattingOptions.InsertLineBreaks));
         builder.AppendLine("-----END CERTIFICATE-----");
         return builder.ToString();
+    }
+
+    private async Task<bool> CleanLinuxMachineStoreAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            if (!File.Exists(LinuxCertPath))
+            {
+                return true; // Already clean
+            }
+
+            // Remove the certificate file
+            var removeResult = await ProcessRunner.RunAsync("sudo", $"rm -f \"{LinuxCertPath}\"", cancellationToken);
+            if (!removeResult.Success)
+            {
+                return false;
+            }
+
+            // Update CA certificates
+            var updateResult = await ProcessRunner.RunAsync("sudo", "update-ca-certificates", cancellationToken);
+            return updateResult.Success;
+        }
+        catch
+        {
+            return false;
+        }
     }
 
     #endregion
@@ -298,6 +386,25 @@ public class MachineStoreService
 
             File.Delete(tempCertPath);
             return result.Success;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private async Task<bool> CleanMacOSSystemKeychainAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            // Delete the certificate from System keychain using -t flag to also remove trust settings
+            var deleteResult = await ProcessRunner.RunAsync(
+                "sudo",
+                "security delete-certificate -t -c \"localhost\" /Library/Keychains/System.keychain",
+                cancellationToken);
+
+            // Success if either the cert was deleted or it didn't exist
+            return deleteResult.Success || deleteResult.StandardError.Contains("could not be found");
         }
         catch
         {

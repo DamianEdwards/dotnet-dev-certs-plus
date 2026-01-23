@@ -39,17 +39,31 @@ public static class HttpsCommand
             Description = "Check certificate status (don't create/import)"
         };
 
+        var cleanOption = new Option<bool>("--clean")
+        {
+            Description = "Remove the certificate from the specified store or WSL distro"
+        };
+
+        var forceOption = new Option<bool>("--force")
+        {
+            Description = "Skip confirmation prompt when cleaning"
+        };
+
         var command = new Command("https", "Manage the HTTPS development certificate with extended functionality");
         command.Options.Add(storeOption);
         command.Options.Add(wslOption);
         command.Options.Add(trustOption);
         command.Options.Add(checkOption);
+        command.Options.Add(cleanOption);
+        command.Options.Add(forceOption);
 
         command.Validators.Add(result =>
         {
             // Check if both --store and --wsl are specified
             var hasStore = result.GetResult(storeOption) is not null;
             var hasWsl = result.GetResult(wslOption) is not null;
+            var hasClean = result.GetValue(cleanOption);
+            var hasCheck = result.GetValue(checkOption);
 
             if (hasStore && hasWsl)
             {
@@ -60,6 +74,12 @@ public static class HttpsCommand
             if (!hasStore && !hasWsl)
             {
                 result.AddError("At least one of '--store' or '--wsl' must be specified.");
+            }
+
+            // --clean and --check are mutually exclusive
+            if (hasClean && hasCheck)
+            {
+                result.AddError("Options '--clean' and '--check' cannot be combined.");
             }
 
             // WSL is Windows-only
@@ -75,16 +95,26 @@ public static class HttpsCommand
             var wslDistro = parseResult.GetValue(wslOption);
             var trust = parseResult.GetValue(trustOption);
             var check = parseResult.GetValue(checkOption);
+            var clean = parseResult.GetValue(cleanOption);
+            var force = parseResult.GetValue(forceOption);
 
             var hasStore = parseResult.GetResult(storeOption) is not null;
             var hasWsl = parseResult.GetResult(wslOption) is not null;
 
             if (hasStore)
             {
+                if (clean)
+                {
+                    return await HandleMachineStoreCleanAsync(force, cancellationToken);
+                }
                 return await HandleMachineStoreAsync(trust, check, cancellationToken);
             }
             else if (hasWsl)
             {
+                if (clean)
+                {
+                    return await HandleWslCleanAsync(wslDistro, force, cancellationToken);
+                }
                 return await HandleWslAsync(wslDistro, trust, check, cancellationToken);
             }
 
@@ -195,6 +225,32 @@ public static class HttpsCommand
             Console.WriteLine("Certificate is trusted in machine store.");
         }
 
+        return 0;
+    }
+
+    private static async Task<int> HandleMachineStoreCleanAsync(bool force, CancellationToken cancellationToken)
+    {
+        var storeService = new MachineStoreService();
+
+        if (!force)
+        {
+            Console.Write("Are you sure you want to remove the HTTPS development certificate from the machine store? (y/N) ");
+            var response = Console.ReadLine();
+            if (response is null || !string.Equals(response, "y", StringComparison.OrdinalIgnoreCase))
+            {
+                Console.WriteLine("Operation cancelled.");
+                return 0;
+            }
+        }
+
+        Console.WriteLine("Removing certificate from machine store...");
+        if (!await storeService.CleanMachineStoreAsync(cancellationToken))
+        {
+            Console.Error.WriteLine("Failed to remove certificate from machine store. Ensure you have appropriate permissions (run as Administrator on Windows, use sudo on Linux/macOS).");
+            return 1;
+        }
+
+        Console.WriteLine("Certificate removed from machine store.");
         return 0;
     }
 
@@ -318,6 +374,56 @@ public static class HttpsCommand
             Console.WriteLine("Certificate is trusted in WSL.");
         }
 
+        return 0;
+    }
+
+    private static async Task<int> HandleWslCleanAsync(string? distro, bool force, CancellationToken cancellationToken)
+    {
+        var wslService = new WslService();
+
+        // Determine which distro to use
+        if (string.IsNullOrEmpty(distro))
+        {
+            distro = await wslService.GetDefaultDistroAsync(cancellationToken);
+            if (string.IsNullOrEmpty(distro))
+            {
+                Console.Error.WriteLine("No default WSL distribution found.");
+                return 1;
+            }
+            Console.WriteLine($"Using default WSL distribution: {distro}");
+        }
+        else
+        {
+            Console.WriteLine($"Using WSL distribution: {distro}");
+        }
+
+        // Check if dotnet is available in WSL
+        Console.WriteLine("Checking if dotnet is available in WSL...");
+        if (!await wslService.CheckDotnetAvailableAsync(distro, cancellationToken))
+        {
+            Console.Error.WriteLine($"dotnet CLI is not available in WSL distribution '{distro}'.");
+            return 4;
+        }
+
+        if (!force)
+        {
+            Console.Write($"Are you sure you want to remove the HTTPS development certificate from WSL ({distro})? (y/N) ");
+            var response = Console.ReadLine();
+            if (response is null || !string.Equals(response, "y", StringComparison.OrdinalIgnoreCase))
+            {
+                Console.WriteLine("Operation cancelled.");
+                return 0;
+            }
+        }
+
+        Console.WriteLine($"Removing certificate from WSL ({distro})...");
+        if (!await wslService.CleanCertAsync(distro, cancellationToken))
+        {
+            Console.Error.WriteLine("Failed to remove certificate from WSL.");
+            return 1;
+        }
+
+        Console.WriteLine("Certificate removed from WSL.");
         return 0;
     }
 }

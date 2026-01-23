@@ -95,6 +95,15 @@ public partial class WslService
     }
 
     /// <summary>
+    /// Cleans the dev certificate from WSL using dotnet dev-certs https --clean.
+    /// </summary>
+    public async Task<bool> CleanCertAsync(string? distro = null, CancellationToken cancellationToken = default)
+    {
+        var result = await RunCommandAsync("dotnet dev-certs https --clean", distro, cancellationToken);
+        return result.Success;
+    }
+
+    /// <summary>
     /// Converts a Windows path to a WSL path.
     /// </summary>
     public static string ConvertToWslPath(string windowsPath)
