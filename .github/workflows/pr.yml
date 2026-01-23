@@ -43,7 +43,7 @@ jobs:
         run: dotnet build --configuration Release --no-restore
 
       - name: Test
-        run: dotnet test test/dotnet-dev-certs-plus.Tests --configuration Release --no-build --verbosity normal --logger "trx;LogFileName=test-results.trx" --logger "html;LogFileName=test-results.html" --results-directory ./test-results
+        run: dotnet test test/dotnet-dev-certs-plus.Tests --configuration Release --no-build --verbosity normal --logger "trx;LogFileName=test-results-${{ matrix.os }}.trx" --logger "html;LogFileName=test-results-${{ matrix.os }}.html" --results-directory ./test-results
 
       - name: Upload test results
         uses: actions/upload-artifact@v4
