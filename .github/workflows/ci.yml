@@ -44,6 +44,7 @@ jobs:
       base_version: ${{ steps.version.outputs.base_version }}
       is_release: ${{ steps.version.outputs.is_release }}
       next_state: ${{ steps.version.outputs.next_state }}
+      confirmed_state: ${{ steps.version.outputs.confirmed_state }}
       release_type: ${{ steps.version.outputs.release_type }}
 
     steps:
@@ -74,19 +75,22 @@ jobs:
           STAGE="pre"
           PRE_NUMBER=1
           DEV_NUMBER=0
+          PENDING_RELEASE="none"
 
           # Try to read state from dev draft release body
           DEV_RELEASE_BODY=$(gh release view dev --json body --jq '.body // empty' 2>/dev/null || echo "")
 
           if [ -n "$DEV_RELEASE_BODY" ]; then
             # Parse version state from release body (stored as HTML comments)
-            # Format: <!-- VERSION_STATE: major.minor.patch|stage|pre_number|dev_number -->
+            # Format: <!-- VERSION_STATE: major.minor.patch|stage|pre_number|dev_number|pending_release -->
             STATE_LINE=$(echo "$DEV_RELEASE_BODY" | grep -o '<!-- VERSION_STATE: [^>]* -->' | head -1 || echo "")
             if [ -n "$STATE_LINE" ]; then
               STATE_DATA=$(echo "$STATE_LINE" | sed 's/<!-- VERSION_STATE: \(.*\) -->/\1/')
-              IFS='|' read -r BASE_VER STAGE PRE_NUMBER DEV_NUMBER <<< "$STATE_DATA"
+              # Read all 5 fields (pending_release may be missing in old state)
+              IFS='|' read -r BASE_VER STAGE PRE_NUMBER DEV_NUMBER PENDING_RELEASE <<< "$STATE_DATA"
               IFS='.' read -r MAJOR MINOR PATCH <<< "$BASE_VER"
-              echo "Read state from dev release: $MAJOR.$MINOR.$PATCH, stage=$STAGE, pre=$PRE_NUMBER, dev=$DEV_NUMBER"
+              PENDING_RELEASE="${PENDING_RELEASE:-none}"
+              echo "Read state from dev release: $MAJOR.$MINOR.$PATCH, stage=$STAGE, pre=$PRE_NUMBER, dev=$DEV_NUMBER, pending=$PENDING_RELEASE"
             fi
           else
             # No dev release, check for latest stable release to determine base version
@@ -104,8 +108,19 @@ jobs:
             echo "Initialized from stable release or defaults: $MAJOR.$MINOR.$PATCH"
           fi
 
-          # Apply version bump if requested
-          if [ "$VERSION_BUMP" != "none" ]; then
+          # Check for pending release retry scenario
+          IS_RETRY="false"
+          if [ "$PENDING_RELEASE" != "none" ] && [ "$PENDING_RELEASE" = "$RELEASE_TYPE" ]; then
+            IS_RETRY="true"
+            echo "Detected retry of pending $PENDING_RELEASE release"
+          elif [ "$PENDING_RELEASE" != "none" ] && [ "$RELEASE_TYPE" != "none" ] && [ "$PENDING_RELEASE" != "$RELEASE_TYPE" ]; then
+            # Different release type requested while one is pending - clear pending
+            echo "Warning: Pending $PENDING_RELEASE release exists but $RELEASE_TYPE requested. Clearing pending state."
+            PENDING_RELEASE="none"
+          fi
+
+          # Apply version bump if requested (only if not a retry)
+          if [ "$VERSION_BUMP" != "none" ] && [ "$IS_RETRY" = "false" ]; then
             case "$VERSION_BUMP" in
               major)
                 MAJOR=$((MAJOR + 1))
@@ -135,6 +150,7 @@ jobs:
 
           BASE_VERSION="${MAJOR}.${MINOR}.${PATCH}"
           IS_RELEASE="false"
+          STORE_STATE_PENDING="none"
 
           # Determine version based on release type
           case "$RELEASE_TYPE" in
@@ -142,11 +158,17 @@ jobs:
               # Ship pre-release to NuGet
               VERSION="${BASE_VERSION}-pre.${PRE_NUMBER}.rel"
               IS_RELEASE="true"
-              # State for next build: increment pre_number, reset dev
-              NEXT_PRE_NUMBER=$((PRE_NUMBER + 1))
-              NEXT_DEV_NUMBER=1
-              NEXT_STAGE="pre"
-              echo "Pre-release: $VERSION"
+              # For build job: store current state with pending flag (don't increment yet)
+              # Publish job will increment after successful push
+              NEXT_PRE_NUMBER=$PRE_NUMBER
+              NEXT_DEV_NUMBER=$DEV_NUMBER
+              NEXT_STAGE=$STAGE
+              STORE_STATE_PENDING="prerelease"
+              # Calculate what publish job should store after success
+              CONFIRMED_PRE_NUMBER=$((PRE_NUMBER + 1))
+              CONFIRMED_DEV_NUMBER=1
+              CONFIRMED_STAGE="pre"
+              echo "Pre-release: $VERSION (pending confirmation)"
               ;;
             rtm)
               # Switch to RTM stage
@@ -162,18 +184,23 @@ jobs:
               # Ship stable release to NuGet
               VERSION="${BASE_VERSION}"
               IS_RELEASE="true"
-              # State for next build: bump version, reset to pre.1.dev.1
+              # For build job: store current state with pending flag (don't increment yet)
+              NEXT_PRE_NUMBER=$PRE_NUMBER
+              NEXT_DEV_NUMBER=$DEV_NUMBER
+              NEXT_STAGE=$STAGE
+              STORE_STATE_PENDING="stable"
+              # Calculate what publish job should store after success
               if [ "$MAJOR" -eq 0 ]; then
-                PATCH=$((PATCH + 1))
+                CONFIRMED_PATCH=$((PATCH + 1))
+                CONFIRMED_BASE_VERSION="${MAJOR}.${MINOR}.${CONFIRMED_PATCH}"
               else
-                MINOR=$((MINOR + 1))
-                PATCH=0
+                CONFIRMED_MINOR=$((MINOR + 1))
+                CONFIRMED_BASE_VERSION="${MAJOR}.${CONFIRMED_MINOR}.0"
               fi
-              NEXT_PRE_NUMBER=1
-              NEXT_DEV_NUMBER=1
-              NEXT_STAGE="pre"
-              BASE_VERSION="${MAJOR}.${MINOR}.${PATCH}"
-              echo "Stable release: $VERSION, next base: $BASE_VERSION"
+              CONFIRMED_PRE_NUMBER=1
+              CONFIRMED_DEV_NUMBER=1
+              CONFIRMED_STAGE="pre"
+              echo "Stable release: $VERSION (pending confirmation)"
               ;;
             *)
               # Normal dev build
@@ -194,8 +221,17 @@ jobs:
           echo "version=${VERSION}" >> $GITHUB_OUTPUT
           echo "base_version=${BASE_VERSION}" >> $GITHUB_OUTPUT
           echo "is_release=${IS_RELEASE}" >> $GITHUB_OUTPUT
-          echo "next_state=${BASE_VERSION}|${NEXT_STAGE}|${NEXT_PRE_NUMBER}|${NEXT_DEV_NUMBER}" >> $GITHUB_OUTPUT
+          echo "next_state=${BASE_VERSION}|${NEXT_STAGE}|${NEXT_PRE_NUMBER}|${NEXT_DEV_NUMBER}|${STORE_STATE_PENDING}" >> $GITHUB_OUTPUT
           echo "release_type=${RELEASE_TYPE}" >> $GITHUB_OUTPUT
+
+          # For releases, also output the confirmed state for publish job to use
+          if [ "$IS_RELEASE" = "true" ]; then
+            if [ "$RELEASE_TYPE" = "stable" ]; then
+              echo "confirmed_state=${CONFIRMED_BASE_VERSION}|${CONFIRMED_STAGE}|${CONFIRMED_PRE_NUMBER}|${CONFIRMED_DEV_NUMBER}|none" >> $GITHUB_OUTPUT
+            else
+              echo "confirmed_state=${BASE_VERSION}|${CONFIRMED_STAGE}|${CONFIRMED_PRE_NUMBER}|${CONFIRMED_DEV_NUMBER}|none" >> $GITHUB_OUTPUT
+            fi
+          fi
 
           # Summary
           echo "## Version Information" >> $GITHUB_STEP_SUMMARY
@@ -203,6 +239,9 @@ jobs:
           echo "- **Base Version:** ${BASE_VERSION}" >> $GITHUB_STEP_SUMMARY
           echo "- **Release Type:** ${RELEASE_TYPE}" >> $GITHUB_STEP_SUMMARY
           echo "- **Is Release:** ${IS_RELEASE}" >> $GITHUB_STEP_SUMMARY
+          if [ "$IS_RETRY" = "true" ]; then
+            echo "- **Retry:** Yes (reusing pending version)" >> $GITHUB_STEP_SUMMARY
+          fi
 
       - name: Restore
         run: dotnet restore src/dotnet-dev-certs-plus/dotnet-dev-certs-plus.csproj
@@ -375,3 +414,35 @@ jobs:
           - [NuGet.org](https://www.nuget.org/packages/dotnet-dev-certs-plus/${VERSION})
           " \
             ./artifacts/*.nupkg
+
+      - name: Confirm version state after successful publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          CONFIRMED_STATE="${{ needs.build.outputs.confirmed_state }}"
+          VERSION="${{ needs.build.outputs.version }}"
+
+          echo "Confirming version state after successful publish: $CONFIRMED_STATE"
+
+          # Delete existing dev release if exists
+          if gh release view dev --json isDraft &>/dev/null; then
+            gh release delete dev --yes
+          fi
+
+          # Create new dev draft release with confirmed state
+          gh release create dev \
+            --draft \
+            --prerelease \
+            --title "Development Build" \
+            --notes "## Development Build
+
+          **Last Release:** v${VERSION}
+          **Commit:** ${{ github.sha }}
+          **Build:** [#${{ github.run_number }}](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
+
+          This is an automatically updated pre-release containing the latest development build.
+
+          Latest dev build will be available after the next push to main.
+
+          <!-- VERSION_STATE: ${CONFIRMED_STATE} -->
+          "
