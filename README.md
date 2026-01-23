@@ -143,9 +143,53 @@ Extended Options:
   --store <machine>               Import cert to the machine store
   --wsl [<distro>]                Import cert to WSL distro (Windows only)
   --force                         Skip confirmation prompt when cleaning
+  --check-update                  Check if a new version is available
 
   -h, --help                      Show help
 ```
+
+## Update Checking
+
+The tool automatically checks for updates in the background and notifies you when a new version is available:
+
+```
+⚠ A new version of dotnet-dev-certs-plus is available: 1.0.0
+  Update with: dotnet tool update -g dotnet-dev-certs-plus
+```
+
+### How It Works
+
+- A background check runs at most once every 15 minutes
+- State is stored in `~/.dotnet-dev-certs-plus/`
+- Update notifications appear after command execution (not in quiet mode)
+
+### Manual Check
+
+```bash
+dotnet dev-certs-plus https --check-update
+```
+
+### Disable Update Checking
+
+Set the environment variable to disable all update checking:
+
+```bash
+# Windows PowerShell
+$env:DOTNET_DEV_CERTS_PLUS_DISABLE_UPDATE_CHECK = "1"
+
+# Linux/macOS
+export DOTNET_DEV_CERTS_PLUS_DISABLE_UPDATE_CHECK=1
+```
+
+### Version Sources
+
+| Your Build Type | Checked Sources |
+|-----------------|-----------------|
+| Dev build (`dev.` in version) | GitHub Packages + NuGet.org |
+| Pre-release | NuGet.org only |
+| Stable | NuGet.org only |
+
+> **Note:** Dev build checks require GitHub authentication via `GITHUB_TOKEN` environment variable or `gh` CLI.
 
 ## Exit Codes
 

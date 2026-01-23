@@ -29,4 +29,9 @@ public class ServiceFactory
     /// Creates a new WSL service instance.
     /// </summary>
     public virtual IWslService CreateWslService() => new WslService(CreateProcessRunner());
+
+    /// <summary>
+    /// Creates a new update checker instance.
+    /// </summary>
+    public virtual IUpdateChecker CreateUpdateChecker() => new UpdateChecker();
 }

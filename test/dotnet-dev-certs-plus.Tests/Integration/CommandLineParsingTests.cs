@@ -30,6 +30,7 @@ public class CommandLineParsingTests
         Assert.Contains("--store", optionNames);
         Assert.Contains("--wsl", optionNames);
         Assert.Contains("--force", optionNames);
+        Assert.Contains("--check-update", optionNames);
 
         // Assert - Standard dotnet dev-certs options
         Assert.Contains("--export-path", optionNames);
@@ -54,6 +55,7 @@ public class CommandLineParsingTests
     [InlineData("https --clean --force")]
     [InlineData("https --verbose")]
     [InlineData("https --quiet")]
+    [InlineData("https --check-update")]
     public void Parse_ValidCommandLines_Succeeds(string commandLine)
     {
         // Arrange
@@ -111,6 +113,10 @@ public class CommandLineParsingTests
     [InlineData("https --clean --check", "cannot be combined")]
     [InlineData("https --password test --no-password", "cannot be combined")]
     [InlineData("https --format invalid", "must be 'Pfx' or 'Pem'")]
+    [InlineData("https --check-update --check", "cannot be combined")]
+    [InlineData("https --check-update --clean", "cannot be combined")]
+    [InlineData("https --check-update --store machine", "cannot be combined")]
+    [InlineData("https --check-update --trust", "cannot be combined")]
     public void Parse_InvalidCommandLines_ReturnsErrors(string commandLine, string expectedErrorSubstring)
     {
         // Arrange
