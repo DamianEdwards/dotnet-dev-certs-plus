@@ -26,11 +26,6 @@ on:
           - minor
           - major
 
-permissions:
-  contents: write
-  packages: write
-  id-token: write  # Required for NuGet trusted publishing
-
 env:
   DOTNET_NOLOGO: true
   DOTNET_SKIP_FIRST_TIME_EXPERIENCE: true
@@ -40,10 +35,16 @@ jobs:
   build:
     runs-on: ubuntu-latest
 
+    permissions:
+      contents: write
+      packages: write
+
     outputs:
       version: ${{ steps.version.outputs.version }}
       base_version: ${{ steps.version.outputs.base_version }}
       is_release: ${{ steps.version.outputs.is_release }}
+      next_state: ${{ steps.version.outputs.next_state }}
+      release_type: ${{ steps.version.outputs.release_type }}
 
     steps:
       - name: Checkout
@@ -232,77 +233,6 @@ jobs:
             --api-key ${{ secrets.GITHUB_TOKEN }} \
             --skip-duplicate
 
-      - name: NuGet login (releases only)
-        if: steps.version.outputs.is_release == 'true'
-        uses: nuget/login@v1
-        with:
-          user: DamianEdwards
-
-      - name: Push to NuGet.org (releases only)
-        if: steps.version.outputs.is_release == 'true'
-        run: |
-          dotnet nuget push ./artifacts/*.nupkg \
-            --source "https://api.nuget.org/v3/index.json"
-
-      - name: Create GitHub release (prerelease)
-        if: github.event.inputs.release_type == 'prerelease'
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          VERSION="${{ steps.version.outputs.version }}"
-
-          gh release create "v${VERSION}" \
-            --prerelease \
-            --title "v${VERSION}" \
-            --notes "## dotnet-dev-certs-plus ${VERSION}
-
-          This is a **pre-release** version.
-
-          ### Installation
-
-          \`\`\`bash
-          dotnet tool install --global dotnet-dev-certs-plus --version ${VERSION}
-          \`\`\`
-
-          ### Package
-
-          - [NuGet.org](https://www.nuget.org/packages/dotnet-dev-certs-plus/${VERSION})
-          " \
-            ./artifacts/*.nupkg
-
-      - name: Create GitHub release (stable)
-        if: github.event.inputs.release_type == 'stable'
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          VERSION="${{ steps.version.outputs.version }}"
-
-          gh release create "v${VERSION}" \
-            --title "v${VERSION}" \
-            --notes "## dotnet-dev-certs-plus v${VERSION}
-
-          ### Installation
-
-          \`\`\`bash
-          dotnet tool install --global dotnet-dev-certs-plus
-          \`\`\`
-
-          Or update an existing installation:
-
-          \`\`\`bash
-          dotnet tool update --global dotnet-dev-certs-plus
-          \`\`\`
-
-          ### What's New
-
-          See the [commit history](https://github.com/${{ github.repository }}/commits/main) for changes in this release.
-
-          ### Package
-
-          - [NuGet.org](https://www.nuget.org/packages/dotnet-dev-certs-plus/${VERSION})
-          " \
-            ./artifacts/*.nupkg
-
       - name: Update dev draft release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -347,3 +277,99 @@ jobs:
           <!-- VERSION_STATE: ${NEXT_STATE} -->
           " \
             $ASSET_NOTE
+
+  # Separate job for publishing to NuGet.org - uses production environment for trusted publishing
+  publish:
+    runs-on: ubuntu-latest
+    needs: build
+    if: needs.build.outputs.is_release == 'true'
+
+    environment: production
+
+    permissions:
+      contents: write
+      id-token: write  # Required for NuGet trusted publishing
+
+    steps:
+      - name: Download package artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: package
+          path: ./artifacts
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+          dotnet-quality: 'preview'
+
+      - name: NuGet login (trusted publishing)
+        uses: nuget/login@v1
+        with:
+          user: DamianEdwards
+
+      - name: Push to NuGet.org
+        run: |
+          dotnet nuget push ./artifacts/*.nupkg \
+            --source "https://api.nuget.org/v3/index.json"
+
+      - name: Create GitHub release (prerelease)
+        if: needs.build.outputs.release_type == 'prerelease'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VERSION="${{ needs.build.outputs.version }}"
+
+          gh release create "v${VERSION}" \
+            --repo ${{ github.repository }} \
+            --prerelease \
+            --title "v${VERSION}" \
+            --notes "## dotnet-dev-certs-plus ${VERSION}
+
+          This is a **pre-release** version.
+
+          ### Installation
+
+          \`\`\`bash
+          dotnet tool install --global dotnet-dev-certs-plus --version ${VERSION}
+          \`\`\`
+
+          ### Package
+
+          - [NuGet.org](https://www.nuget.org/packages/dotnet-dev-certs-plus/${VERSION})
+          " \
+            ./artifacts/*.nupkg
+
+      - name: Create GitHub release (stable)
+        if: needs.build.outputs.release_type == 'stable'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VERSION="${{ needs.build.outputs.version }}"
+
+          gh release create "v${VERSION}" \
+            --repo ${{ github.repository }} \
+            --title "v${VERSION}" \
+            --notes "## dotnet-dev-certs-plus v${VERSION}
+
+          ### Installation
+
+          \`\`\`bash
+          dotnet tool install --global dotnet-dev-certs-plus
+          \`\`\`
+
+          Or update an existing installation:
+
+          \`\`\`bash
+          dotnet tool update --global dotnet-dev-certs-plus
+          \`\`\`
+
+          ### What's New
+
+          See the [commit history](https://github.com/${{ github.repository }}/commits/main) for changes in this release.
+
+          ### Package
+
+          - [NuGet.org](https://www.nuget.org/packages/dotnet-dev-certs-plus/${VERSION})
+          " \
+            ./artifacts/*.nupkg
