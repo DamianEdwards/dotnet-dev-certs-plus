@@ -56,7 +56,7 @@ jobs:
           retention-days: 30
 
   test-results:
-    name: Test Results
+    name: Publish Test Results
     needs: test
     if: always()
     runs-on: ubuntu-latest
