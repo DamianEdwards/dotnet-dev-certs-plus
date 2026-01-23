@@ -2,6 +2,8 @@
 
 [![CI](https://github.com/DamianEdwards/dotnet-dev-certs-plus/actions/workflows/ci.yml/badge.svg)](https://github.com/DamianEdwards/dotnet-dev-certs-plus/actions/workflows/ci.yml)
 [![NuGet](https://img.shields.io/nuget/v/dotnet-dev-certs-plus.svg)](https://www.nuget.org/packages/dotnet-dev-certs-plus)
+[![License](https://img.shields.io/github/license/DamianEdwards/dotnet-dev-certs-plus)](LICENSE)
+![.NET](https://img.shields.io/badge/.NET-10.0-512BD4)
 
 Extended functionality for the `dotnet dev-certs` command, including machine store and WSL support. This tool is a drop-in replacement for `dotnet dev-certs https` - all standard options are supported by passing through to the underlying command.
 
