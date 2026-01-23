@@ -101,7 +101,11 @@ public partial class WslService : IWslService
         // Convert Windows path to WSL path (e.g., C:\temp\cert.pfx -> /mnt/c/temp/cert.pfx)
         var wslPath = ConvertToWslPath(windowsCertPath);
 
-        var command = $"dotnet dev-certs https --import \"{wslPath}\" --password \"{password}\"";
+        // Use shell-safe escaping for paths and passwords to prevent command injection
+        var escapedPath = ProcessRunner.EscapeShellArgument(wslPath);
+        var escapedPassword = ProcessRunner.EscapeShellArgument(password);
+
+        var command = $"dotnet dev-certs https --import {escapedPath} --password {escapedPassword}";
         if (trust)
         {
             command += " --trust";

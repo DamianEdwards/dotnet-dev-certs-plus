@@ -323,7 +323,10 @@ public class MachineStoreService : IMachineStoreService
             await File.WriteAllTextAsync(tempFile, pemContent, cancellationToken);
 
             // Move to ca-certificates directory (requires sudo)
-            var moveResult = await _processRunner.RunAsync("sudo", $"cp \"{tempFile}\" \"{LinuxCertPath}\"", cancellationToken);
+            // Use shell-safe escaping to prevent command injection
+            var escapedTempFile = ProcessRunner.EscapeShellArgument(tempFile);
+            var escapedDestPath = ProcessRunner.EscapeShellArgument(LinuxCertPath);
+            var moveResult = await _processRunner.RunAsync("sudo", $"cp {escapedTempFile} {escapedDestPath}", cancellationToken);
             File.Delete(tempFile);
 
             if (!moveResult.Success)
@@ -360,7 +363,9 @@ public class MachineStoreService : IMachineStoreService
             }
 
             // Remove the certificate file
-            var removeResult = await _processRunner.RunAsync("sudo", $"rm -f \"{LinuxCertPath}\"", cancellationToken);
+            // Use shell-safe escaping to prevent command injection
+            var escapedPath = ProcessRunner.EscapeShellArgument(LinuxCertPath);
+            var removeResult = await _processRunner.RunAsync("sudo", $"rm -f {escapedPath}", cancellationToken);
             if (!removeResult.Success)
             {
                 return false;
@@ -441,9 +446,12 @@ public class MachineStoreService : IMachineStoreService
         try
         {
             // Import the PFX to System keychain
+            // Use shell-safe escaping to prevent command injection
+            var escapedPfxPath = ProcessRunner.EscapeShellArgument(pfxPath);
+            var escapedPassword = ProcessRunner.EscapeShellArgument(password);
             var result = await _processRunner.RunAsync(
                 "sudo",
-                $"security import \"{pfxPath}\" -k /Library/Keychains/System.keychain -P \"{password}\" -T /usr/bin/codesign -T /usr/bin/security",
+                $"security import {escapedPfxPath} -k /Library/Keychains/System.keychain -P {escapedPassword} -T /usr/bin/codesign -T /usr/bin/security",
                 cancellationToken);
 
             return result.Success;
@@ -470,9 +478,11 @@ public class MachineStoreService : IMachineStoreService
             await File.WriteAllBytesAsync(tempCertPath, cert.Export(X509ContentType.Cert), cancellationToken);
 
             // Add trust settings for SSL
+            // Use shell-safe escaping to prevent command injection
+            var escapedTempCertPath = ProcessRunner.EscapeShellArgument(tempCertPath);
             var result = await _processRunner.RunAsync(
                 "sudo",
-                $"security add-trusted-cert -d -r trustAsRoot -k /Library/Keychains/System.keychain \"{tempCertPath}\"",
+                $"security add-trusted-cert -d -r trustAsRoot -k /Library/Keychains/System.keychain {escapedTempCertPath}",
                 cancellationToken);
 
             File.Delete(tempCertPath);
@@ -489,9 +499,10 @@ public class MachineStoreService : IMachineStoreService
         try
         {
             // Delete the certificate from System keychain using -t flag to also remove trust settings
+            // Note: "localhost" is a hardcoded constant, safe to use directly
             var deleteResult = await _processRunner.RunAsync(
                 "sudo",
-                "security delete-certificate -t -c \"localhost\" /Library/Keychains/System.keychain",
+                "security delete-certificate -t -c 'localhost' /Library/Keychains/System.keychain",
                 cancellationToken);
 
             // Success if either the cert was deleted or it didn't exist

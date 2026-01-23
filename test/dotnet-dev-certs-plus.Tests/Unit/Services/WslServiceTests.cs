@@ -228,6 +228,27 @@ public class WslServiceTests
 
     [Fact(Skip = "WSL tests only run on Windows")]
     [Trait("Category", "Windows")]
+    public async Task ImportCertAsync_UsesShellEscaping()
+    {
+        if (!RuntimeInformation.IsOSPlatform(OSPlatform.Windows)) return;
+
+        // Arrange - password with special characters that would be dangerous in shell
+        _mockRunner.RunAsync("wsl.exe", Arg.Any<string>(), Arg.Any<CancellationToken>())
+            .Returns(new ProcessResult(0, "Imported", ""));
+
+        // Act - use a path/password with dangerous shell chars
+        var result = await _service.ImportCertAsync(@"C:\temp\cert.pfx", "pass'word", trust: false);
+
+        // Assert - should use single quotes (shell-safe escaping)
+        Assert.True(result);
+        await _mockRunner.Received(1).RunAsync(
+            "wsl.exe",
+            Arg.Is<string>(s => s.Contains("'") && !s.Contains("\"")),  // single quotes used, not double
+            Arg.Any<CancellationToken>());
+    }
+
+    [Fact(Skip = "WSL tests only run on Windows")]
+    [Trait("Category", "Windows")]
     public async Task CleanCertAsync_CallsCorrectCommand()
     {
         if (!RuntimeInformation.IsOSPlatform(OSPlatform.Windows)) return;

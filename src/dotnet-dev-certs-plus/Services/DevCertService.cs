@@ -60,11 +60,13 @@ public class DevCertService : IDevCertService
         string? password = null,
         CancellationToken cancellationToken = default)
     {
-        var args = $"dev-certs https --export-path \"{path}\" --format {format}";
+        var escapedPath = ProcessRunner.EscapeArgument(path);
+        var args = $"dev-certs https --export-path {escapedPath} --format {format}";
 
         if (format == CertificateFormat.Pfx && !string.IsNullOrEmpty(password))
         {
-            args += $" --password \"{password}\"";
+            var escapedPassword = ProcessRunner.EscapeArgument(password);
+            args += $" --password {escapedPassword}";
         }
 
         var result = await _processRunner.RunAsync("dotnet", args, cancellationToken);

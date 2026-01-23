@@ -4,6 +4,8 @@ namespace DotnetDevCertsPlus.Tests.Unit.Services;
 
 public class ProcessRunnerTests
 {
+    #region EscapeArgument Tests (Windows command-line escaping)
+
     [Theory]
     [InlineData("", "\"\"")]
     [InlineData("simple", "simple")]
@@ -29,6 +31,92 @@ public class ProcessRunnerTests
         // Assert
         Assert.Equal("\"\"", result);
     }
+
+    #endregion
+
+    #region EscapeShellArgument Tests (POSIX shell escaping)
+
+    [Theory]
+    [InlineData("", "''")]
+    [InlineData("simple", "'simple'")]
+    [InlineData("with space", "'with space'")]
+    [InlineData("with'quote", "'with'\\''quote'")]
+    [InlineData("/path/to/file", "'/path/to/file'")]
+    [InlineData("/mnt/c/Program Files/app.exe", "'/mnt/c/Program Files/app.exe'")]
+    public void EscapeShellArgument_ReturnsCorrectlyEscapedString(string input, string expected)
+    {
+        // Act
+        var result = ProcessRunner.EscapeShellArgument(input);
+
+        // Assert
+        Assert.Equal(expected, result);
+    }
+
+    [Fact]
+    public void EscapeShellArgument_NullInput_ReturnsEmptyQuotes()
+    {
+        // Act
+        var result = ProcessRunner.EscapeShellArgument(null!);
+
+        // Assert
+        Assert.Equal("''", result);
+    }
+
+    [Fact]
+    public void EscapeShellArgument_WithSpecialShellChars_EscapesCorrectly()
+    {
+        // These characters would be dangerous in double quotes but safe in single quotes
+        var input = "test; rm -rf /; echo";
+
+        // Act
+        var result = ProcessRunner.EscapeShellArgument(input);
+
+        // Assert - should be wrapped in single quotes, making shell metacharacters safe
+        Assert.Equal("'test; rm -rf /; echo'", result);
+    }
+
+    [Fact]
+    public void EscapeShellArgument_WithDollarSign_EscapesCorrectly()
+    {
+        // $ would cause variable expansion in double quotes
+        var input = "$HOME/file.txt";
+
+        // Act
+        var result = ProcessRunner.EscapeShellArgument(input);
+
+        // Assert - single quotes prevent variable expansion
+        Assert.Equal("'$HOME/file.txt'", result);
+    }
+
+    [Fact]
+    public void EscapeShellArgument_WithBackticks_EscapesCorrectly()
+    {
+        // Backticks would cause command substitution in double quotes
+        var input = "test`whoami`";
+
+        // Act
+        var result = ProcessRunner.EscapeShellArgument(input);
+
+        // Assert - single quotes prevent command substitution
+        Assert.Equal("'test`whoami`'", result);
+    }
+
+    [Fact]
+    public void EscapeShellArgument_WithMultipleSingleQuotes_EscapesCorrectly()
+    {
+        // Multiple single quotes should each be escaped
+        var input = "it's a 'test'";
+
+        // Act
+        var result = ProcessRunner.EscapeShellArgument(input);
+
+        // Assert - each single quote is escaped
+        Assert.Equal("'it'\\''s a '\\''test'\\'''", result);
+    }
+
+    #endregion
+
+    #region RunAsync Tests
 
     [Fact]
     public async Task RunAsync_EchoCommand_ReturnsOutput()
@@ -80,6 +168,10 @@ public class ProcessRunnerTests
         }
     }
 
+    #endregion
+
+    #region Instance and ProcessResult Tests
+
     [Fact]
     public void Default_ReturnsSingletonInstance()
     {
@@ -117,4 +209,6 @@ public class ProcessRunnerTests
         // Assert
         Assert.Equal("stdout only", combined);
     }
+
+    #endregion
 }

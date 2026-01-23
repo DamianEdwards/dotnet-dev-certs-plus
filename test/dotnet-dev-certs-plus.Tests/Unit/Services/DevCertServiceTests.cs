@@ -149,6 +149,44 @@ public class DevCertServiceTests
     }
 
     [Fact]
+    public async Task ExportAsync_PathWithSpaces_ProperlyEscaped()
+    {
+        // Arrange
+        var path = "/tmp/path with spaces/cert.pfx";
+        var password = "test-password";
+        _mockRunner.RunAsync("dotnet", Arg.Any<string>(), Arg.Any<CancellationToken>())
+            .Returns(new ProcessResult(0, "Exported", ""));
+
+        // Act
+        await _service.ExportAsync(path, CertificateFormat.Pfx, password);
+
+        // Assert - path should be properly escaped (wrapped in quotes)
+        await _mockRunner.Received(1).RunAsync(
+            "dotnet",
+            Arg.Is<string>(s => s.Contains("\"") && s.Contains("path with spaces")),
+            Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task ExportAsync_PasswordWithSpecialChars_ProperlyEscaped()
+    {
+        // Arrange
+        var path = "/tmp/cert.pfx";
+        var password = "pass\"word\\test";
+        _mockRunner.RunAsync("dotnet", Arg.Any<string>(), Arg.Any<CancellationToken>())
+            .Returns(new ProcessResult(0, "Exported", ""));
+
+        // Act
+        await _service.ExportAsync(path, CertificateFormat.Pfx, password);
+
+        // Assert - password should be properly escaped
+        await _mockRunner.Received(1).RunAsync(
+            "dotnet",
+            Arg.Is<string>(s => s.Contains("--password") && s.Contains("\\\"")),  // escaped quote
+            Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
     public void DefaultConstructor_UsesDefaultProcessRunner()
     {
         // Act
