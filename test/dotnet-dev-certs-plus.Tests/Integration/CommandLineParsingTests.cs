@@ -1,5 +1,6 @@
 using System.CommandLine;
 using System.CommandLine.Parsing;
+using System.Runtime.InteropServices;
 using DotnetDevCertsPlus.Commands;
 using DotnetDevCertsPlus.Services;
 using NSubstitute;
@@ -46,8 +47,6 @@ public class CommandLineParsingTests
     [Theory]
     [InlineData("https --store machine")]
     [InlineData("https --store")]
-    [InlineData("https --wsl")]
-    [InlineData("https --wsl Ubuntu")]
     [InlineData("https --check")]
     [InlineData("https --trust")]
     [InlineData("https --check --trust")]
@@ -69,8 +68,46 @@ public class CommandLineParsingTests
     }
 
     [Theory]
+    [InlineData("https --wsl")]
+    [InlineData("https --wsl Ubuntu")]
+    public void Parse_WslCommandLines_SucceedsOnWindows(string commandLine)
+    {
+        // WSL is only supported on Windows
+        if (!RuntimeInformation.IsOSPlatform(OSPlatform.Windows)) return;
+
+        // Arrange
+        var command = HttpsCommand.Create();
+        var rootCommand = new RootCommand { command };
+
+        // Act
+        var parseResult = rootCommand.Parse(commandLine);
+
+        // Assert
+        Assert.Empty(parseResult.Errors);
+    }
+
+    [Theory]
+    [InlineData("https --wsl")]
+    [InlineData("https --wsl Ubuntu")]
+    public void Parse_WslCommandLines_ReturnsErrorOnNonWindows(string commandLine)
+    {
+        // This test only runs on non-Windows platforms
+        if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows)) return;
+
+        // Arrange
+        var command = HttpsCommand.Create();
+        var rootCommand = new RootCommand { command };
+
+        // Act
+        var parseResult = rootCommand.Parse(commandLine);
+
+        // Assert
+        Assert.NotEmpty(parseResult.Errors);
+        Assert.Contains(parseResult.Errors, e => e.Message.Contains("only supported on Windows", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Theory]
     [InlineData("https --store invalid", "The only supported store value is 'machine'")]
-    [InlineData("https --store machine --wsl", "cannot be combined")]
     [InlineData("https --clean --check", "cannot be combined")]
     [InlineData("https --password test --no-password", "cannot be combined")]
     [InlineData("https --format invalid", "must be 'Pfx' or 'Pem'")]
@@ -88,16 +125,53 @@ public class CommandLineParsingTests
         Assert.Contains(parseResult.Errors, e => e.Message.Contains(expectedErrorSubstring, StringComparison.OrdinalIgnoreCase));
     }
 
+    [Fact]
+    public void Parse_StoreAndWslCombined_ReturnsError()
+    {
+        // This test verifies that --store and --wsl cannot be combined
+        // On non-Windows, the --wsl error will trigger instead
+        if (!RuntimeInformation.IsOSPlatform(OSPlatform.Windows)) return;
+
+        // Arrange
+        var command = HttpsCommand.Create();
+        var rootCommand = new RootCommand { command };
+
+        // Act
+        var parseResult = rootCommand.Parse("https --store machine --wsl");
+
+        // Assert
+        Assert.NotEmpty(parseResult.Errors);
+        Assert.Contains(parseResult.Errors, e => e.Message.Contains("cannot be combined", StringComparison.OrdinalIgnoreCase));
+    }
+
     [Theory]
     [InlineData("https --store machine --import /path/cert.pfx", "cannot be combined")]
     [InlineData("https --store machine --export-path /path/cert.pfx", "cannot be combined")]
     [InlineData("https --store machine --format Pfx", "cannot be combined")]
     [InlineData("https --store machine --password test", "cannot be combined")]
     [InlineData("https --store machine --no-password", "cannot be combined")]
+    public void Parse_StoreWithPassthroughOptions_ReturnsErrors(string commandLine, string expectedErrorSubstring)
+    {
+        // Arrange
+        var command = HttpsCommand.Create();
+        var rootCommand = new RootCommand { command };
+
+        // Act
+        var parseResult = rootCommand.Parse(commandLine);
+
+        // Assert
+        Assert.NotEmpty(parseResult.Errors);
+        Assert.Contains(parseResult.Errors, e => e.Message.Contains(expectedErrorSubstring, StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Theory]
     [InlineData("https --wsl --import /path/cert.pfx", "cannot be combined")]
     [InlineData("https --wsl --export-path /path/cert.pfx", "cannot be combined")]
-    public void Parse_StoreOrWslWithPassthroughOptions_ReturnsErrors(string commandLine, string expectedErrorSubstring)
+    public void Parse_WslWithPassthroughOptions_ReturnsErrors(string commandLine, string expectedErrorSubstring)
     {
+        // WSL is only supported on Windows, so this test only runs on Windows
+        if (!RuntimeInformation.IsOSPlatform(OSPlatform.Windows)) return;
+
         // Arrange
         var command = HttpsCommand.Create();
         var rootCommand = new RootCommand { command };
