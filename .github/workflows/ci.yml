@@ -3,28 +3,6 @@ name: CI
 on:
   push:
     branches: [main]
-  workflow_dispatch:
-    inputs:
-      release_type:
-        description: 'Release type'
-        required: false
-        default: 'none'
-        type: choice
-        options:
-          - none
-          - prerelease
-          - rtm
-          - stable
-      version_bump:
-        description: 'Version bump type'
-        required: false
-        default: 'none'
-        type: choice
-        options:
-          - none
-          - patch
-          - minor
-          - major
 
 env:
   DOTNET_NOLOGO: true
@@ -39,32 +17,19 @@ jobs:
       contents: write
       packages: write
 
-    outputs:
-      version: ${{ steps.version.outputs.version }}
-      base_version: ${{ steps.version.outputs.base_version }}
-      is_release: ${{ steps.version.outputs.is_release }}
-      next_state: ${{ steps.version.outputs.next_state }}
-      confirmed_state: ${{ steps.version.outputs.confirmed_state }}
-      release_type: ${{ steps.version.outputs.release_type }}
-
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: Setup .NET
-        uses: actions/setup-dotnet@v4
-        with:
-          dotnet-version: '10.0.x'
-          dotnet-quality: 'preview'
+      - name: Build
+        uses: ./.github/actions/build
 
       - name: Calculate version
         id: version
         env:
           GH_TOKEN: ${{ github.token }}
-          RELEASE_TYPE: ${{ github.event.inputs.release_type || 'none' }}
-          VERSION_BUMP: ${{ github.event.inputs.version_bump || 'none' }}
         run: |
           set -e
 
@@ -108,148 +73,37 @@ jobs:
             echo "Initialized from stable release or defaults: $MAJOR.$MINOR.$PATCH"
           fi
 
-          # Check for pending release retry scenario
-          IS_RETRY="false"
-          if [ "$PENDING_RELEASE" != "none" ] && [ "$PENDING_RELEASE" = "$RELEASE_TYPE" ]; then
-            IS_RETRY="true"
-            echo "Detected retry of pending $PENDING_RELEASE release"
-          elif [ "$PENDING_RELEASE" != "none" ] && [ "$RELEASE_TYPE" != "none" ] && [ "$PENDING_RELEASE" != "$RELEASE_TYPE" ]; then
-            # Different release type requested while one is pending - clear pending
-            echo "Warning: Pending $PENDING_RELEASE release exists but $RELEASE_TYPE requested. Clearing pending state."
-            PENDING_RELEASE="none"
-          fi
-
-          # Apply version bump if requested (only if not a retry)
-          if [ "$VERSION_BUMP" != "none" ] && [ "$IS_RETRY" = "false" ]; then
-            case "$VERSION_BUMP" in
-              major)
-                MAJOR=$((MAJOR + 1))
-                MINOR=0
-                PATCH=0
-                ;;
-              minor)
-                if [ "$MAJOR" -eq 0 ]; then
-                  # For 0.x, minor bump is like major bump behavior
-                  MINOR=$((MINOR + 1))
-                  PATCH=0
-                else
-                  MINOR=$((MINOR + 1))
-                  PATCH=0
-                fi
-                ;;
-              patch)
-                PATCH=$((PATCH + 1))
-                ;;
-            esac
-            # Reset to pre.1.dev.1 after version bump
-            STAGE="pre"
-            PRE_NUMBER=1
-            DEV_NUMBER=0
-            echo "Applied $VERSION_BUMP bump: $MAJOR.$MINOR.$PATCH"
+          # If there's a pending release, don't increment dev number (wait for release to complete)
+          if [ "$PENDING_RELEASE" != "none" ]; then
+            echo "Pending release detected ($PENDING_RELEASE), skipping dev build"
+            echo "skip=true" >> $GITHUB_OUTPUT
+            exit 0
           fi
 
           BASE_VERSION="${MAJOR}.${MINOR}.${PATCH}"
-          IS_RELEASE="false"
-          STORE_STATE_PENDING="none"
 
-          # Determine version based on release type
-          case "$RELEASE_TYPE" in
-            prerelease)
-              # Ship pre-release to NuGet
-              VERSION="${BASE_VERSION}-pre.${PRE_NUMBER}.rel"
-              IS_RELEASE="true"
-              # For build job: store current state with pending flag (don't increment yet)
-              # Publish job will increment after successful push
-              NEXT_PRE_NUMBER=$PRE_NUMBER
-              NEXT_DEV_NUMBER=$DEV_NUMBER
-              NEXT_STAGE=$STAGE
-              STORE_STATE_PENDING="prerelease"
-              # Calculate what publish job should store after success
-              CONFIRMED_PRE_NUMBER=$((PRE_NUMBER + 1))
-              CONFIRMED_DEV_NUMBER=1
-              CONFIRMED_STAGE="pre"
-              echo "Pre-release: $VERSION (pending confirmation)"
-              ;;
-            rtm)
-              # Switch to RTM stage
-              STAGE="rtm"
-              DEV_NUMBER=$((DEV_NUMBER + 1))
-              VERSION="${BASE_VERSION}-rtm.dev.${DEV_NUMBER}"
-              NEXT_PRE_NUMBER=$PRE_NUMBER
-              NEXT_DEV_NUMBER=$DEV_NUMBER
-              NEXT_STAGE="rtm"
-              echo "RTM stage: $VERSION"
-              ;;
-            stable)
-              # Ship stable release to NuGet
-              VERSION="${BASE_VERSION}"
-              IS_RELEASE="true"
-              # For build job: store current state with pending flag (don't increment yet)
-              NEXT_PRE_NUMBER=$PRE_NUMBER
-              NEXT_DEV_NUMBER=$DEV_NUMBER
-              NEXT_STAGE=$STAGE
-              STORE_STATE_PENDING="stable"
-              # Calculate what publish job should store after success
-              if [ "$MAJOR" -eq 0 ]; then
-                CONFIRMED_PATCH=$((PATCH + 1))
-                CONFIRMED_BASE_VERSION="${MAJOR}.${MINOR}.${CONFIRMED_PATCH}"
-              else
-                CONFIRMED_MINOR=$((MINOR + 1))
-                CONFIRMED_BASE_VERSION="${MAJOR}.${CONFIRMED_MINOR}.0"
-              fi
-              CONFIRMED_PRE_NUMBER=1
-              CONFIRMED_DEV_NUMBER=1
-              CONFIRMED_STAGE="pre"
-              echo "Stable release: $VERSION (pending confirmation)"
-              ;;
-            *)
-              # Normal dev build
-              DEV_NUMBER=$((DEV_NUMBER + 1))
-              if [ "$STAGE" = "rtm" ]; then
-                VERSION="${BASE_VERSION}-rtm.dev.${DEV_NUMBER}"
-              else
-                VERSION="${BASE_VERSION}-pre.${PRE_NUMBER}.dev.${DEV_NUMBER}"
-              fi
-              NEXT_PRE_NUMBER=$PRE_NUMBER
-              NEXT_DEV_NUMBER=$DEV_NUMBER
-              NEXT_STAGE=$STAGE
-              echo "Dev build: $VERSION"
-              ;;
-          esac
+          # Normal dev build - increment dev number
+          DEV_NUMBER=$((DEV_NUMBER + 1))
+          if [ "$STAGE" = "rtm" ]; then
+            VERSION="${BASE_VERSION}-rtm.dev.${DEV_NUMBER}"
+          else
+            VERSION="${BASE_VERSION}-pre.${PRE_NUMBER}.dev.${DEV_NUMBER}"
+          fi
+
+          echo "Dev build: $VERSION"
 
           # Output version info
           echo "version=${VERSION}" >> $GITHUB_OUTPUT
-          echo "base_version=${BASE_VERSION}" >> $GITHUB_OUTPUT
-          echo "is_release=${IS_RELEASE}" >> $GITHUB_OUTPUT
-          echo "next_state=${BASE_VERSION}|${NEXT_STAGE}|${NEXT_PRE_NUMBER}|${NEXT_DEV_NUMBER}|${STORE_STATE_PENDING}" >> $GITHUB_OUTPUT
-          echo "release_type=${RELEASE_TYPE}" >> $GITHUB_OUTPUT
-
-          # For releases, also output the confirmed state for publish job to use
-          if [ "$IS_RELEASE" = "true" ]; then
-            if [ "$RELEASE_TYPE" = "stable" ]; then
-              echo "confirmed_state=${CONFIRMED_BASE_VERSION}|${CONFIRMED_STAGE}|${CONFIRMED_PRE_NUMBER}|${CONFIRMED_DEV_NUMBER}|none" >> $GITHUB_OUTPUT
-            else
-              echo "confirmed_state=${BASE_VERSION}|${CONFIRMED_STAGE}|${CONFIRMED_PRE_NUMBER}|${CONFIRMED_DEV_NUMBER}|none" >> $GITHUB_OUTPUT
-            fi
-          fi
+          echo "next_state=${BASE_VERSION}|${STAGE}|${PRE_NUMBER}|${DEV_NUMBER}|none" >> $GITHUB_OUTPUT
+          echo "skip=false" >> $GITHUB_OUTPUT
 
           # Summary
           echo "## Version Information" >> $GITHUB_STEP_SUMMARY
           echo "- **Version:** ${VERSION}" >> $GITHUB_STEP_SUMMARY
           echo "- **Base Version:** ${BASE_VERSION}" >> $GITHUB_STEP_SUMMARY
-          echo "- **Release Type:** ${RELEASE_TYPE}" >> $GITHUB_STEP_SUMMARY
-          echo "- **Is Release:** ${IS_RELEASE}" >> $GITHUB_STEP_SUMMARY
-          if [ "$IS_RETRY" = "true" ]; then
-            echo "- **Retry:** Yes (reusing pending version)" >> $GITHUB_STEP_SUMMARY
-          fi
-
-      - name: Restore
-        run: dotnet restore src/dotnet-dev-certs-plus/dotnet-dev-certs-plus.csproj
-
-      - name: Build
-        run: dotnet build src/dotnet-dev-certs-plus/dotnet-dev-certs-plus.csproj --configuration Release --no-restore
 
       - name: Pack
+        if: steps.version.outputs.skip != 'true'
         run: |
           dotnet pack src/dotnet-dev-certs-plus/dotnet-dev-certs-plus.csproj \
             --configuration Release \
@@ -258,14 +112,15 @@ jobs:
             -p:PackageVersion=${{ steps.version.outputs.version }}
 
       - name: Upload package artifact
+        if: steps.version.outputs.skip != 'true'
         uses: actions/upload-artifact@v4
         with:
           name: package
           path: ./artifacts/*.nupkg
           retention-days: 90
 
-      - name: Push to GitHub Packages (dev builds only)
-        if: steps.version.outputs.is_release != 'true'
+      - name: Push to GitHub Packages
+        if: steps.version.outputs.skip != 'true'
         run: |
           dotnet nuget push ./artifacts/*.nupkg \
             --source "https://nuget.pkg.github.com/${{ github.repository_owner }}/index.json" \
@@ -273,27 +128,16 @@ jobs:
             --skip-duplicate
 
       - name: Update dev draft release
+        if: steps.version.outputs.skip != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           VERSION="${{ steps.version.outputs.version }}"
           NEXT_STATE="${{ steps.version.outputs.next_state }}"
-          IS_RELEASE="${{ steps.version.outputs.is_release }}"
 
           # Delete existing dev release if exists
           if gh release view dev --json isDraft &>/dev/null; then
             gh release delete dev --yes
-          fi
-
-          # Determine install command based on whether this is a release
-          if [ "$IS_RELEASE" = "true" ]; then
-            INSTALL_NOTE="Latest dev build will be available after the next push to main."
-            ASSET_NOTE=""
-          else
-            INSTALL_NOTE="\`\`\`bash
-          dotnet tool install --global dotnet-dev-certs-plus --version ${VERSION} --add-source https://nuget.pkg.github.com/${{ github.repository_owner }}/index.json
-          \`\`\`"
-            ASSET_NOTE="./artifacts/*.nupkg"
           fi
 
           # Create new dev draft release with state in body
@@ -311,154 +155,10 @@ jobs:
 
           ### Installation
 
-          ${INSTALL_NOTE}
+          \`\`\`bash
+          dotnet tool install --global dotnet-dev-certs-plus --version ${VERSION} --add-source https://nuget.pkg.github.com/${{ github.repository_owner }}/index.json
+          \`\`\`
 
           <!-- VERSION_STATE: ${NEXT_STATE} -->
           " \
-            $ASSET_NOTE
-
-  # Separate job for publishing to NuGet.org - uses production environment for trusted publishing
-  publish:
-    runs-on: ubuntu-latest
-    needs: build
-    if: needs.build.outputs.is_release == 'true'
-
-    environment: nuget.org
-
-    permissions:
-      contents: write
-      id-token: write  # Required for NuGet trusted publishing
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Download package artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: package
-          path: ./artifacts
-
-      - name: Setup .NET
-        uses: actions/setup-dotnet@v4
-        with:
-          dotnet-version: '10.0.x'
-          dotnet-quality: 'preview'
-
-      - name: NuGet login (trusted publishing)
-        uses: nuget/login@v1
-        id: nuget-login
-        with:
-          user: DamianEdwards
-
-      - name: Push to NuGet.org
-        run: |
-          dotnet nuget push ./artifacts/*.nupkg \
-            --source "https://api.nuget.org/v3/index.json" \
-            --api-key ${{ steps.nuget-login.outputs.NUGET_API_KEY }} \
-            --skip-duplicate
-
-      - name: Create GitHub release (prerelease)
-        if: needs.build.outputs.release_type == 'prerelease'
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          VERSION="${{ needs.build.outputs.version }}"
-
-          # Skip if release already exists (retry scenario)
-          if gh release view "v${VERSION}" --repo ${{ github.repository }} &>/dev/null; then
-            echo "Release v${VERSION} already exists, skipping creation"
-            exit 0
-          fi
-
-          gh release create "v${VERSION}" \
-            --repo ${{ github.repository }} \
-            --prerelease \
-            --title "v${VERSION}" \
-            --notes "## dotnet-dev-certs-plus ${VERSION}
-
-          This is a **pre-release** version.
-
-          ### Installation
-
-          \`\`\`bash
-          dotnet tool install --global dotnet-dev-certs-plus --version ${VERSION}
-          \`\`\`
-
-          ### Package
-
-          - [NuGet.org](https://www.nuget.org/packages/dotnet-dev-certs-plus/${VERSION})
-          " \
             ./artifacts/*.nupkg
-
-      - name: Create GitHub release (stable)
-        if: needs.build.outputs.release_type == 'stable'
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          VERSION="${{ needs.build.outputs.version }}"
-
-          # Skip if release already exists (retry scenario)
-          if gh release view "v${VERSION}" --repo ${{ github.repository }} &>/dev/null; then
-            echo "Release v${VERSION} already exists, skipping creation"
-            exit 0
-          fi
-
-          gh release create "v${VERSION}" \
-            --repo ${{ github.repository }} \
-            --title "v${VERSION}" \
-            --notes "## dotnet-dev-certs-plus v${VERSION}
-
-          ### Installation
-
-          \`\`\`bash
-          dotnet tool install --global dotnet-dev-certs-plus
-          \`\`\`
-
-          Or update an existing installation:
-
-          \`\`\`bash
-          dotnet tool update --global dotnet-dev-certs-plus
-          \`\`\`
-
-          ### What's New
-
-          See the [commit history](https://github.com/${{ github.repository }}/commits/main) for changes in this release.
-
-          ### Package
-
-          - [NuGet.org](https://www.nuget.org/packages/dotnet-dev-certs-plus/${VERSION})
-          " \
-            ./artifacts/*.nupkg
-
-      - name: Confirm version state after successful publish
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          CONFIRMED_STATE="${{ needs.build.outputs.confirmed_state }}"
-          VERSION="${{ needs.build.outputs.version }}"
-
-          echo "Confirming version state after successful publish: $CONFIRMED_STATE"
-
-          # Delete existing dev release if exists
-          if gh release view dev --json isDraft &>/dev/null; then
-            gh release delete dev --yes
-          fi
-
-          # Create new dev draft release with confirmed state
-          gh release create dev \
-            --draft \
-            --prerelease \
-            --title "Development Build" \
-            --notes "## Development Build
-
-          **Last Release:** v${VERSION}
-          **Commit:** ${{ github.sha }}
-          **Build:** [#${{ github.run_number }}](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
-
-          This is an automatically updated pre-release containing the latest development build.
-
-          Latest dev build will be available after the next push to main.
-
-          <!-- VERSION_STATE: ${CONFIRMED_STATE} -->
-          "

@@ -4,11 +4,74 @@ This document describes the CI/CD pipeline for dotnet-dev-certs-plus, including 
 
 ## Overview
 
-The project uses a single GitHub Actions workflow (`ci.yml`) that handles:
+The project uses three GitHub Actions workflows:
 
-- **Continuous Integration**: Automatic builds on every push to `main`
-- **Development Packages**: Published to GitHub Packages for testing
-- **Releases**: Published to NuGet.org via manual workflow dispatch
+| Workflow | File | Trigger | Purpose |
+|----------|------|---------|---------|
+| **CI** | `ci.yml` | Push to `main` | Dev builds → GitHub Packages |
+| **Release** | `release.yml` | Manual dispatch | Releases → NuGet.org |
+| **PR** | `pr.yml` | Pull requests | Build verification |
+
+All workflows share a common build action (`.github/actions/build/`) for consistency.
+
+## Workflow Structure
+
+### Composite Action (`.github/actions/build/`)
+
+A reusable action that performs the common build steps:
+
+1. **Checkout** - Clone the repository with full history
+2. **Setup .NET** - Install .NET 10 SDK (preview)
+3. **Restore** - Restore NuGet packages
+4. **Build** - Build in Release configuration
+
+This action is used by all three workflows for consistency.
+
+### CI Workflow (`ci.yml`)
+
+Runs automatically on every push to `main`:
+
+1. **Build** - Uses the composite action
+2. **Calculate version** - Determine dev version from state
+3. **Pack** - Create NuGet package with version
+4. **Upload artifact** - Store package
+5. **Push to GitHub Packages** - Publish dev package
+6. **Update dev draft release** - Store new version state
+
+If a release is pending (indicated by `pending_release` in state), the CI workflow skips publishing to avoid version conflicts.
+
+### Release Workflow (`release.yml`)
+
+Triggered manually via workflow dispatch:
+
+**Inputs:**
+- `release_type`: `prerelease`, `rtm`, or `stable` (required)
+- `version_bump`: `none`, `patch`, `minor`, or `major` (optional)
+
+**Jobs:**
+
+1. **Build job**:
+   - Uses the composite action
+   - Calculates release version
+   - Packs with version
+   - Updates dev release with pending state
+
+2. **Publish job** (for prerelease/stable):
+   - Downloads package artifact
+   - Pushes to NuGet.org via trusted publishing
+   - Creates GitHub release
+   - Confirms version state after success
+
+3. **Confirm-RTM job** (for rtm):
+   - Confirms RTM state (no NuGet publish needed)
+
+### PR Workflow (`pr.yml`)
+
+Runs on all pull requests:
+
+1. **Build** - Uses the composite action
+
+This ensures all PRs are buildable before merge. Tests will be added here when available.
 
 ## Versioning Scheme
 
@@ -64,7 +127,7 @@ dotnet tool install --global dotnet-dev-certs-plus \
 
 ### Pre-releases (Manual)
 
-Triggered via workflow dispatch with `release_type: prerelease`.
+Triggered via **Release** workflow dispatch with `release_type: prerelease`.
 
 **What happens:**
 1. Version is set to `{base}-pre.{pre}.rel`
@@ -79,7 +142,7 @@ Triggered via workflow dispatch with `release_type: prerelease`.
 
 ### RTM Stage (Manual)
 
-Triggered via workflow dispatch with `release_type: rtm`.
+Triggered via **Release** workflow dispatch with `release_type: rtm`.
 
 **What happens:**
 1. Stage switches from `pre` to `rtm`
@@ -93,7 +156,7 @@ This is useful when you're feature-complete and only doing bug fixes before stab
 
 ### Stable Releases (Manual)
 
-Triggered via workflow dispatch with `release_type: stable`.
+Triggered via **Release** workflow dispatch with `release_type: stable`.
 
 **What happens:**
 1. Version is set to `{base}` (no suffix)
@@ -108,7 +171,7 @@ Triggered via workflow dispatch with `release_type: stable`.
 
 ## Version Bumps
 
-You can bump the major, minor, or patch version using the `version_bump` workflow input.
+You can bump the major, minor, or patch version using the `version_bump` input in the **Release** workflow.
 
 | Bump Type | Before | After |
 |-----------|--------|-------|
@@ -117,34 +180,6 @@ You can bump the major, minor, or patch version using the `version_bump` workflo
 | `major` | `0.1.0` | `1.0.0` |
 
 After a version bump, the state resets to `pre.1.dev.1`.
-
-## Workflow Jobs
-
-### Build Job
-
-Runs on every workflow execution:
-
-1. **Checkout** - Clone the repository
-2. **Setup .NET** - Install .NET 10 SDK (preview)
-3. **Calculate version** - Determine version from state
-4. **Restore** - Restore NuGet packages
-5. **Build** - Build in Release configuration
-6. **Pack** - Create NuGet package
-7. **Upload artifact** - Store package for publish job
-8. **Push to GitHub Packages** - Dev builds only
-9. **Update dev draft release** - Store new version state
-
-### Publish Job
-
-Runs only for releases (`is_release == true`):
-
-1. **Checkout** - Clone repository (needed for `gh` CLI)
-2. **Download artifact** - Get package from build job
-3. **Setup .NET** - Install .NET SDK
-4. **NuGet login** - Authenticate via trusted publishing (OIDC)
-5. **Push to NuGet.org** - Publish package
-6. **Create GitHub release** - Create versioned release with notes
-7. **Confirm version state** - Update dev release with incremented state
 
 ## Trusted Publishing
 
@@ -156,16 +191,17 @@ The workflow uses NuGet trusted publishing instead of API keys:
 
 **Requirements:**
 - Trusted publishing policy configured on NuGet.org
-- `id-token: write` permission in workflow
+- `id-token: write` permission in the Release workflow
 - `nuget.org` environment configured in GitHub repository
 
 ## Pending Release Handling
 
-To prevent version skips when a publish fails, the workflow uses a "pending release" mechanism:
+To prevent version skips when a publish fails, the workflows use a "pending release" mechanism:
 
-1. **Build job** stores state with `pending_release` flag (e.g., `prerelease`)
-2. **Publish job** (after success) updates state with incremented values and clears pending flag
-3. **If publish fails**, re-running the workflow detects the pending state and reuses the same version
+1. **Release workflow** stores state with `pending_release` flag (e.g., `prerelease`)
+2. **CI workflow** detects pending state and skips dev builds
+3. **Publish job** (after success) updates state with incremented values and clears pending flag
+4. **If publish fails**, re-running the Release workflow detects the pending state and reuses the same version
 
 This ensures that a failed release can be retried without losing the version number.
 
@@ -173,7 +209,7 @@ This ensures that a failed release can be retried without losing the version num
 
 ### Pre-release
 
-1. Go to **Actions** → **CI** workflow
+1. Go to **Actions** → **Release** workflow
 2. Click **Run workflow**
 3. Select:
    - Branch: `main`
@@ -184,7 +220,7 @@ This ensures that a failed release can be retried without losing the version num
 ### Stable Release
 
 1. Optionally trigger RTM stage first (if not already in RTM)
-2. Go to **Actions** → **CI** workflow
+2. Go to **Actions** → **Release** workflow
 3. Click **Run workflow**
 4. Select:
    - Branch: `main`
@@ -196,7 +232,7 @@ This ensures that a failed release can be retried without losing the version num
 
 ### Publish job failed but NuGet push succeeded
 
-The workflow uses `--skip-duplicate` so you can safely re-run the entire workflow. The NuGet push will skip the existing package and continue to the state confirmation step.
+The Release workflow uses `--skip-duplicate` so you can safely re-run. The NuGet push will skip the existing package and continue to the state confirmation step.
 
 ### Version state is wrong
 
@@ -208,6 +244,6 @@ You can manually edit the dev draft release body to correct the `VERSION_STATE` 
 
 ### No dev release exists
 
-If the dev draft release is missing, the workflow will:
+If the dev draft release is missing, the workflows will:
 1. Look for the latest stable release to determine base version
 2. If no stable release exists, start from `0.0.1-pre.1.dev.1`

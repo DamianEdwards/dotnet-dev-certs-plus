@@ -63,5 +63,5 @@ src/dotnet-dev-certs-plus/
 
 See [docs/build-and-release.md](docs/build-and-release.md) for:
 - Versioning scheme (dev builds, pre-releases, stable releases)
-- CI/CD pipeline details
+- CI/CD pipeline details (three workflows: `ci.yml`, `release.yml`, `pr.yml`)
 - How to trigger releases via GitHub Actions

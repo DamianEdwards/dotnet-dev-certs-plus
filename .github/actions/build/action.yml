@@ -1,0 +1,19 @@
+name: 'Build'
+description: 'Setup .NET, restore, and build the project'
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Setup .NET
+      uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: '10.0.x'
+        dotnet-quality: 'preview'
+
+    - name: Restore
+      run: dotnet restore src/dotnet-dev-certs-plus/dotnet-dev-certs-plus.csproj
+      shell: bash
+
+    - name: Build
+      run: dotnet build src/dotnet-dev-certs-plus/dotnet-dev-certs-plus.csproj --configuration Release --no-restore
+      shell: bash
