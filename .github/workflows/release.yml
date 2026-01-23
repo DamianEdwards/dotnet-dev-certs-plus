@@ -154,7 +154,7 @@ jobs:
               STORE_STATE_PENDING="prerelease"
               # Calculate what publish job should store after success
               CONFIRMED_PRE_NUMBER=$((PRE_NUMBER + 1))
-              CONFIRMED_DEV_NUMBER=1
+              CONFIRMED_DEV_NUMBER=0
               CONFIRMED_STAGE="pre"
               echo "Pre-release: $VERSION (pending confirmation)"
               ;;
@@ -189,7 +189,7 @@ jobs:
                 CONFIRMED_BASE_VERSION="${MAJOR}.${CONFIRMED_MINOR}.0"
               fi
               CONFIRMED_PRE_NUMBER=1
-              CONFIRMED_DEV_NUMBER=1
+              CONFIRMED_DEV_NUMBER=0
               CONFIRMED_STAGE="pre"
               echo "Stable release: $VERSION (pending confirmation)"
               ;;
@@ -372,6 +372,15 @@ jobs:
 
           echo "Confirming version state after successful publish: $CONFIRMED_STATE"
 
+          # Parse confirmed state to compute next dev version
+          IFS='|' read -r BASE_VER STAGE PRE_NUMBER DEV_NUMBER PENDING <<< "$CONFIRMED_STATE"
+          NEXT_DEV=$((DEV_NUMBER + 1))
+          if [ "$STAGE" = "rtm" ]; then
+            NEXT_DEV_VERSION="${BASE_VER}-rtm.dev.${NEXT_DEV}"
+          else
+            NEXT_DEV_VERSION="${BASE_VER}-pre.${PRE_NUMBER}.dev.${NEXT_DEV}"
+          fi
+
           # Delete existing dev release if exists
           if gh release view dev --json isDraft &>/dev/null; then
             gh release delete dev --yes
@@ -384,7 +393,8 @@ jobs:
             --title "Development Build" \
             --notes "## Development Build
 
-          **Last Release:** v${VERSION}
+          **Last Published Release:** v${VERSION}
+          **Next Dev Version:** ${NEXT_DEV_VERSION}
           **Commit:** ${{ github.sha }}
           **Build:** [#${{ github.run_number }}](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
 
@@ -417,6 +427,11 @@ jobs:
 
           echo "Confirming RTM state: $CONFIRMED_STATE"
 
+          # Parse confirmed state to compute next dev version
+          IFS='|' read -r BASE_VER STAGE PRE_NUMBER DEV_NUMBER PENDING <<< "$CONFIRMED_STATE"
+          NEXT_DEV=$((DEV_NUMBER + 1))
+          NEXT_DEV_VERSION="${BASE_VER}-rtm.dev.${NEXT_DEV}"
+
           # Delete existing dev release if exists
           if gh release view dev --json isDraft &>/dev/null; then
             gh release delete dev --yes
@@ -431,6 +446,7 @@ jobs:
 
           **Stage:** RTM
           **Version:** ${VERSION}
+          **Next Dev Version:** ${NEXT_DEV_VERSION}
           **Commit:** ${{ github.sha }}
           **Build:** [#${{ github.run_number }}](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
 
