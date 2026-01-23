@@ -16,7 +16,9 @@ public static class HttpsCommand
     private const int ExitCodeCertificateNotTrusted = 3;
     private const int ExitCodeDotnetNotAvailable = 4; // dev-certs-plus specific: dotnet CLI not available in WSL
 
-    public static Command Create()
+    public static Command Create() => Create(ServiceFactory.Default);
+
+    public static Command Create(ServiceFactory serviceFactory)
     {
         // Extended options (dev-certs-plus specific)
         var storeOption = new Option<string?>("--store")
@@ -225,32 +227,37 @@ public static class HttpsCommand
 
             if (hasStore)
             {
+                var storeService = serviceFactory.CreateMachineStoreService();
+                var certService = serviceFactory.CreateDevCertService();
                 if (clean)
                 {
-                    return await HandleMachineStoreCleanAsync(force, output, cancellationToken);
+                    return await HandleMachineStoreCleanAsync(storeService, force, output, cancellationToken);
                 }
                 if (checkTrustMachineReadable)
                 {
-                    return await HandleMachineStoreCheckJsonAsync(cancellationToken);
+                    return await HandleMachineStoreCheckJsonAsync(storeService, cancellationToken);
                 }
-                return await HandleMachineStoreAsync(trust, check, output, cancellationToken);
+                return await HandleMachineStoreAsync(certService, storeService, trust, check, output, cancellationToken);
             }
             else if (hasWsl)
             {
+                var wslService = serviceFactory.CreateWslService();
+                var certService = serviceFactory.CreateDevCertService();
                 if (clean)
                 {
-                    return await HandleWslCleanAsync(wslDistro, force, output, cancellationToken);
+                    return await HandleWslCleanAsync(wslService, wslDistro, force, output, cancellationToken);
                 }
                 if (checkTrustMachineReadable)
                 {
-                    return await HandleWslCheckJsonAsync(wslDistro, output, cancellationToken);
+                    return await HandleWslCheckJsonAsync(wslService, wslDistro, output, cancellationToken);
                 }
-                return await HandleWslAsync(wslDistro, trust, check, output, cancellationToken);
+                return await HandleWslAsync(certService, wslService, wslDistro, trust, check, output, cancellationToken);
             }
             else
             {
                 // Passthrough mode - forward to dotnet dev-certs https
-                return await HandlePassthroughAsync(parseResult, exportPathOption, passwordOption, noPasswordOption,
+                var processRunner = serviceFactory.CreateProcessRunner();
+                return await HandlePassthroughAsync(processRunner, parseResult, exportPathOption, passwordOption, noPasswordOption,
                     checkOption, cleanOption, importOption, formatOption, trustOption, verboseOption, quietOption,
                     checkTrustMachineReadableOption, cancellationToken);
             }
@@ -260,6 +267,7 @@ public static class HttpsCommand
     }
 
     private static async Task<int> HandlePassthroughAsync(
+        IProcessRunner processRunner,
         ParseResult parseResult,
         Option<string?> exportPathOption,
         Option<string?> passwordOption,
@@ -335,7 +343,7 @@ public static class HttpsCommand
             args.Append(" --check-trust-machine-readable");
         }
 
-        var result = await ProcessRunner.RunAsync("dotnet", args.ToString(), cancellationToken);
+        var result = await processRunner.RunAsync("dotnet", args.ToString(), cancellationToken);
 
         // Output the result directly (preserving original output)
         if (!string.IsNullOrEmpty(result.StandardOutput))
@@ -350,9 +358,8 @@ public static class HttpsCommand
         return result.ExitCode;
     }
 
-    private static async Task<int> HandleMachineStoreCheckJsonAsync(CancellationToken cancellationToken)
+    private static async Task<int> HandleMachineStoreCheckJsonAsync(IMachineStoreService storeService, CancellationToken cancellationToken)
     {
-        var storeService = new MachineStoreService();
         var certInfo = await storeService.GetCertificateInfoAsync(cancellationToken);
 
         if (certInfo is null)
@@ -367,10 +374,8 @@ public static class HttpsCommand
         return certInfo.TrustLevel == "Full" ? ExitCodeSuccess : ExitCodeCertificateNotTrusted;
     }
 
-    private static async Task<int> HandleWslCheckJsonAsync(string? distro, OutputHelper output, CancellationToken cancellationToken)
+    private static async Task<int> HandleWslCheckJsonAsync(IWslService wslService, string? distro, OutputHelper output, CancellationToken cancellationToken)
     {
-        var wslService = new WslService();
-
         // Determine which distro to use
         if (string.IsNullOrEmpty(distro))
         {
@@ -399,11 +404,8 @@ public static class HttpsCommand
         return exitCode;
     }
 
-    private static async Task<int> HandleMachineStoreAsync(bool trust, bool check, OutputHelper output, CancellationToken cancellationToken)
+    private static async Task<int> HandleMachineStoreAsync(IDevCertService certService, IMachineStoreService storeService, bool trust, bool check, OutputHelper output, CancellationToken cancellationToken)
     {
-        var certService = new DevCertService();
-        var storeService = new MachineStoreService();
-
         if (check)
         {
             return await HandleMachineStoreCheckAsync(trust, storeService, output, cancellationToken);
@@ -477,7 +479,7 @@ public static class HttpsCommand
         }
     }
 
-    private static async Task<int> HandleMachineStoreCheckAsync(bool trust, MachineStoreService storeService, OutputHelper output, CancellationToken cancellationToken)
+    private static async Task<int> HandleMachineStoreCheckAsync(bool trust, IMachineStoreService storeService, OutputHelper output, CancellationToken cancellationToken)
     {
         output.WriteLine("Checking machine store status...");
 
@@ -505,10 +507,8 @@ public static class HttpsCommand
         return ExitCodeSuccess;
     }
 
-    private static async Task<int> HandleMachineStoreCleanAsync(bool force, OutputHelper output, CancellationToken cancellationToken)
+    private static async Task<int> HandleMachineStoreCleanAsync(IMachineStoreService storeService, bool force, OutputHelper output, CancellationToken cancellationToken)
     {
-        var storeService = new MachineStoreService();
-
         if (!force)
         {
             Console.Write("Are you sure you want to remove the HTTPS development certificate from the machine store? (y/N) ");
@@ -531,11 +531,8 @@ public static class HttpsCommand
         return 0;
     }
 
-    private static async Task<int> HandleWslAsync(string? distro, bool trust, bool check, OutputHelper output, CancellationToken cancellationToken)
+    private static async Task<int> HandleWslAsync(IDevCertService certService, IWslService wslService, string? distro, bool trust, bool check, OutputHelper output, CancellationToken cancellationToken)
     {
-        var certService = new DevCertService();
-        var wslService = new WslService();
-
         // Determine which distro to use
         if (string.IsNullOrEmpty(distro))
         {
@@ -630,7 +627,7 @@ public static class HttpsCommand
         }
     }
 
-    private static async Task<int> HandleWslCheckAsync(string distro, bool trust, WslService wslService, OutputHelper output, CancellationToken cancellationToken)
+    private static async Task<int> HandleWslCheckAsync(string distro, bool trust, IWslService wslService, OutputHelper output, CancellationToken cancellationToken)
     {
         output.WriteLine($"Checking certificate status in WSL ({distro})...");
 
@@ -657,10 +654,8 @@ public static class HttpsCommand
         return ExitCodeSuccess;
     }
 
-    private static async Task<int> HandleWslCleanAsync(string? distro, bool force, OutputHelper output, CancellationToken cancellationToken)
+    private static async Task<int> HandleWslCleanAsync(IWslService wslService, string? distro, bool force, OutputHelper output, CancellationToken cancellationToken)
     {
-        var wslService = new WslService();
-
         // Determine which distro to use
         if (string.IsNullOrEmpty(distro))
         {

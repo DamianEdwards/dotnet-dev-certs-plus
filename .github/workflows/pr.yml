@@ -19,4 +19,66 @@ jobs:
       - name: Build
         uses: ./.github/actions/build
 
-      # Future: Add test step here when tests are available
+  test:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+      fail-fast: false
+    
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Restore
+        run: dotnet restore
+
+      - name: Build
+        run: dotnet build --configuration Release --no-restore
+
+      - name: Test
+        run: dotnet test test/dotnet-dev-certs-plus.Tests --configuration Release --no-build --verbosity normal --logger "trx;LogFileName=test-results-${{ matrix.os }}.trx" --logger "html;LogFileName=test-results-${{ matrix.os }}.html" --results-directory ./test-results
+
+      - name: Upload test results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: test-results-${{ matrix.os }}
+          path: |
+            ./test-results/*.trx
+            ./test-results/*.html
+          retention-days: 30
+
+  test-results:
+    name: Publish Test Results
+    needs: test
+    if: always()
+    runs-on: ubuntu-latest
+
+    permissions:
+      checks: write
+      pull-requests: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download all test results
+        uses: actions/download-artifact@v4
+        with:
+          pattern: test-results-*
+          path: ./test-results
+          merge-multiple: true
+
+      - name: Publish test results
+        uses: dorny/test-reporter@v1
+        with:
+          name: Test Results
+          path: ./test-results/*.trx
+          reporter: dotnet-trx

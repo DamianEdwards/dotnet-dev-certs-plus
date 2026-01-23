@@ -5,14 +5,31 @@ namespace DotnetDevCertsPlus.Services;
 /// <summary>
 /// Wrapper for dotnet dev-certs https CLI commands.
 /// </summary>
-public class DevCertService
+public class DevCertService : IDevCertService
 {
+    private readonly IProcessRunner _processRunner;
+
+    /// <summary>
+    /// Creates a new instance using the default process runner.
+    /// </summary>
+    public DevCertService() : this(ProcessRunner.Default)
+    {
+    }
+
+    /// <summary>
+    /// Creates a new instance with the specified process runner.
+    /// </summary>
+    public DevCertService(IProcessRunner processRunner)
+    {
+        _processRunner = processRunner;
+    }
+
     /// <summary>
     /// Checks the current status of the dev certificate.
     /// </summary>
     public async Task<DevCertStatus> CheckStatusAsync(CancellationToken cancellationToken = default)
     {
-        var result = await ProcessRunner.RunAsync("dotnet", "dev-certs https --check --trust", cancellationToken);
+        var result = await _processRunner.RunAsync("dotnet", "dev-certs https --check --trust", cancellationToken);
         return DevCertStatus.Parse(result.CombinedOutput, result.ExitCode);
     }
 
@@ -27,7 +44,7 @@ public class DevCertService
             return true;
         }
 
-        var result = await ProcessRunner.RunAsync("dotnet", "dev-certs https", cancellationToken);
+        var result = await _processRunner.RunAsync("dotnet", "dev-certs https", cancellationToken);
         return result.Success;
     }
 
@@ -43,14 +60,16 @@ public class DevCertService
         string? password = null,
         CancellationToken cancellationToken = default)
     {
-        var args = $"dev-certs https --export-path \"{path}\" --format {format}";
+        var escapedPath = ProcessRunner.EscapeArgument(path);
+        var args = $"dev-certs https --export-path {escapedPath} --format {format}";
 
         if (format == CertificateFormat.Pfx && !string.IsNullOrEmpty(password))
         {
-            args += $" --password \"{password}\"";
+            var escapedPassword = ProcessRunner.EscapeArgument(password);
+            args += $" --password {escapedPassword}";
         }
 
-        var result = await ProcessRunner.RunAsync("dotnet", args, cancellationToken);
+        var result = await _processRunner.RunAsync("dotnet", args, cancellationToken);
         return result.Success;
     }
 }

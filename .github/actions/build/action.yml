@@ -10,9 +10,9 @@ runs:
         dotnet-version: '10.0.x'
 
     - name: Restore
-      run: dotnet restore src/dotnet-dev-certs-plus/dotnet-dev-certs-plus.csproj
+      run: dotnet restore
       shell: bash
 
     - name: Build
-      run: dotnet build src/dotnet-dev-certs-plus/dotnet-dev-certs-plus.csproj --configuration Release --no-restore
+      run: dotnet build --configuration Release --no-restore
       shell: bash

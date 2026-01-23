@@ -6,8 +6,25 @@ namespace DotnetDevCertsPlus.Services;
 /// <summary>
 /// Service for WSL (Windows Subsystem for Linux) operations.
 /// </summary>
-public partial class WslService
+public partial class WslService : IWslService
 {
+    private readonly IProcessRunner _processRunner;
+
+    /// <summary>
+    /// Creates a new instance using the default process runner.
+    /// </summary>
+    public WslService() : this(ProcessRunner.Default)
+    {
+    }
+
+    /// <summary>
+    /// Creates a new instance with the specified process runner.
+    /// </summary>
+    public WslService(IProcessRunner processRunner)
+    {
+        _processRunner = processRunner;
+    }
+
     /// <summary>
     /// Gets the default WSL distribution name.
     /// </summary>
@@ -15,7 +32,7 @@ public partial class WslService
     {
         EnsureWindows();
 
-        var result = await ProcessRunner.RunAsync("wsl.exe", "--list --quiet", cancellationToken);
+        var result = await _processRunner.RunAsync("wsl.exe", "--list --quiet", cancellationToken);
         if (!result.Success || string.IsNullOrWhiteSpace(result.StandardOutput))
         {
             return null;
@@ -34,7 +51,7 @@ public partial class WslService
         EnsureWindows();
 
         var args = BuildWslArgs(distro, "which dotnet");
-        var result = await ProcessRunner.RunAsync("wsl.exe", args, cancellationToken);
+        var result = await _processRunner.RunAsync("wsl.exe", args, cancellationToken);
 
         return result.Success && !string.IsNullOrWhiteSpace(result.StandardOutput);
     }
@@ -50,7 +67,7 @@ public partial class WslService
         EnsureWindows();
 
         var args = BuildWslArgs(distro, command);
-        return await ProcessRunner.RunAsync("wsl.exe", args, cancellationToken);
+        return await _processRunner.RunAsync("wsl.exe", args, cancellationToken);
     }
 
     /// <summary>
@@ -84,7 +101,11 @@ public partial class WslService
         // Convert Windows path to WSL path (e.g., C:\temp\cert.pfx -> /mnt/c/temp/cert.pfx)
         var wslPath = ConvertToWslPath(windowsCertPath);
 
-        var command = $"dotnet dev-certs https --import \"{wslPath}\" --password \"{password}\"";
+        // Use shell-safe escaping for paths and passwords to prevent command injection
+        var escapedPath = ProcessRunner.EscapeShellArgument(wslPath);
+        var escapedPassword = ProcessRunner.EscapeShellArgument(password);
+
+        var command = $"dotnet dev-certs https --import {escapedPath} --password {escapedPassword}";
         if (trust)
         {
             command += " --trust";
@@ -117,7 +138,7 @@ public partial class WslService
     /// <summary>
     /// Converts a Windows path to a WSL path.
     /// </summary>
-    public static string ConvertToWslPath(string windowsPath)
+    public string ConvertToWslPath(string windowsPath)
     {
         // C:\Users\foo\file.txt -> /mnt/c/Users/foo/file.txt
         var match = DriveLetterRegex().Match(windowsPath);
@@ -129,6 +150,21 @@ public partial class WslService
         }
 
         // Fallback: just replace backslashes
+        return windowsPath.Replace('\\', '/');
+    }
+
+    /// <summary>
+    /// Converts a Windows path to a WSL path (static helper).
+    /// </summary>
+    public static string ConvertWindowsPathToWsl(string windowsPath)
+    {
+        var match = DriveLetterRegex().Match(windowsPath);
+        if (match.Success)
+        {
+            var driveLetter = match.Groups[1].Value.ToLowerInvariant();
+            var remainingPath = match.Groups[2].Value.Replace('\\', '/');
+            return $"/mnt/{driveLetter}{remainingPath}";
+        }
         return windowsPath.Replace('\\', '/');
     }
 

@@ -16,6 +16,7 @@ jobs:
     permissions:
       contents: write
       packages: write
+      checks: write
 
     steps:
       - name: Checkout
@@ -25,6 +26,27 @@ jobs:
 
       - name: Build
         uses: ./.github/actions/build
+
+      - name: Test
+        run: dotnet test test/dotnet-dev-certs-plus.Tests --configuration Release --no-build --verbosity normal --logger "trx;LogFileName=test-results.trx" --logger "html;LogFileName=test-results.html" --results-directory ./test-results
+
+      - name: Upload test results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: test-results
+          path: |
+            ./test-results/*.trx
+            ./test-results/*.html
+          retention-days: 30
+
+      - name: Publish test results
+        uses: dorny/test-reporter@v1
+        if: always()
+        with:
+          name: Test Results
+          path: ./test-results/*.trx
+          reporter: dotnet-trx
 
       - name: Calculate version
         id: version
