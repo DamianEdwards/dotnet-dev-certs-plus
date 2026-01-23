@@ -120,6 +120,11 @@ public static class HttpsCommand
             Description = "Same as running --check --trust, but output the results in json"
         };
 
+        var checkUpdateOption = new Option<bool>("--check-update")
+        {
+            Description = "Check if a new version of the tool is available"
+        };
+
         var command = new Command("https", "Manage the HTTPS development certificate with extended functionality");
 
         // Add extended options
@@ -139,6 +144,7 @@ public static class HttpsCommand
         command.Options.Add(verboseOption);
         command.Options.Add(quietOption);
         command.Options.Add(checkTrustMachineReadableOption);
+        command.Options.Add(checkUpdateOption);
 
         command.Validators.Add(result =>
         {
@@ -152,6 +158,18 @@ public static class HttpsCommand
             var hasExportPath = result.GetResult(exportPathOption) is not null;
             var hasFormat = result.GetResult(formatOption) is not null;
             var hasCheckTrustMachineReadable = result.GetValue(checkTrustMachineReadableOption);
+            var hasCheckUpdate = result.GetValue(checkUpdateOption);
+            var hasTrust = result.GetValue(trustOption);
+
+            // --check-update is a standalone operation
+            if (hasCheckUpdate)
+            {
+                if (hasStore || hasWsl || hasClean || hasCheck || hasImport || hasExportPath || 
+                    hasFormat || hasPassword || hasNoPassword || hasCheckTrustMachineReadable || hasTrust)
+                {
+                    result.AddError("Option '--check-update' cannot be combined with other options.");
+                }
+            }
 
             // --store and --wsl cannot be combined
             if (hasStore && hasWsl)
@@ -213,6 +231,7 @@ public static class HttpsCommand
         {
             var hasStore = parseResult.GetResult(storeOption) is not null;
             var hasWsl = parseResult.GetResult(wslOption) is not null;
+            var checkUpdate = parseResult.GetValue(checkUpdateOption);
 
             var wslDistro = parseResult.GetValue(wslOption);
             var trust = parseResult.GetValue(trustOption);
@@ -224,20 +243,37 @@ public static class HttpsCommand
             var checkTrustMachineReadable = parseResult.GetValue(checkTrustMachineReadableOption);
 
             var output = new OutputHelper(verbose, quiet);
+            var updateChecker = serviceFactory.CreateUpdateChecker();
 
+            // Handle --check-update flag (used by background process)
+            if (checkUpdate)
+            {
+                return await HandleCheckUpdateAsync(updateChecker, output, cancellationToken);
+            }
+
+            // Start background update check if needed (fire and forget)
+            if (updateChecker.ShouldStartBackgroundCheck())
+            {
+                updateChecker.StartBackgroundCheck();
+            }
+
+            int exitCode;
             if (hasStore)
             {
                 var storeService = serviceFactory.CreateMachineStoreService();
                 var certService = serviceFactory.CreateDevCertService();
                 if (clean)
                 {
-                    return await HandleMachineStoreCleanAsync(storeService, force, output, cancellationToken);
+                    exitCode = await HandleMachineStoreCleanAsync(storeService, force, output, cancellationToken);
                 }
-                if (checkTrustMachineReadable)
+                else if (checkTrustMachineReadable)
                 {
-                    return await HandleMachineStoreCheckJsonAsync(storeService, cancellationToken);
+                    exitCode = await HandleMachineStoreCheckJsonAsync(storeService, cancellationToken);
                 }
-                return await HandleMachineStoreAsync(certService, storeService, trust, check, output, cancellationToken);
+                else
+                {
+                    exitCode = await HandleMachineStoreAsync(certService, storeService, trust, check, output, cancellationToken);
+                }
             }
             else if (hasWsl)
             {
@@ -245,25 +281,99 @@ public static class HttpsCommand
                 var certService = serviceFactory.CreateDevCertService();
                 if (clean)
                 {
-                    return await HandleWslCleanAsync(wslService, wslDistro, force, output, cancellationToken);
+                    exitCode = await HandleWslCleanAsync(wslService, wslDistro, force, output, cancellationToken);
                 }
-                if (checkTrustMachineReadable)
+                else if (checkTrustMachineReadable)
                 {
-                    return await HandleWslCheckJsonAsync(wslService, wslDistro, output, cancellationToken);
+                    exitCode = await HandleWslCheckJsonAsync(wslService, wslDistro, output, cancellationToken);
                 }
-                return await HandleWslAsync(certService, wslService, wslDistro, trust, check, output, cancellationToken);
+                else
+                {
+                    exitCode = await HandleWslAsync(certService, wslService, wslDistro, trust, check, output, cancellationToken);
+                }
             }
             else
             {
                 // Passthrough mode - forward to dotnet dev-certs https
                 var processRunner = serviceFactory.CreateProcessRunner();
-                return await HandlePassthroughAsync(processRunner, parseResult, exportPathOption, passwordOption, noPasswordOption,
+                exitCode = await HandlePassthroughAsync(processRunner, parseResult, exportPathOption, passwordOption, noPasswordOption,
                     checkOption, cleanOption, importOption, formatOption, trustOption, verboseOption, quietOption,
                     checkTrustMachineReadableOption, cancellationToken);
             }
+
+            // Check for and display update notification (unless quiet mode or JSON output)
+            if (!quiet && !checkTrustMachineReadable)
+            {
+                DisplayUpdateNotification(updateChecker, output);
+            }
+
+            return exitCode;
         });
 
         return command;
+    }
+
+    private static async Task<int> HandleCheckUpdateAsync(IUpdateChecker updateChecker, OutputHelper output, CancellationToken cancellationToken)
+    {
+        output.WriteLine($"Checking for updates (current version: {VersionInfo.GetCurrentVersion()})...");
+        
+        var result = await updateChecker.CheckForUpdateAsync(cancellationToken);
+        
+        if (!result.Success)
+        {
+            output.WriteError("Failed to check for updates.");
+            return ExitCodeError;
+        }
+
+        if (result.UpdateAvailable)
+        {
+            output.WriteLine($"A new version is available: {result.LatestVersion}");
+            DisplayUpdateInstructions(output);
+        }
+        else
+        {
+            output.WriteLine("You are running the latest version.");
+        }
+
+        return ExitCodeSuccess;
+    }
+
+    private static void DisplayUpdateNotification(IUpdateChecker updateChecker, OutputHelper output)
+    {
+        var availableVersion = updateChecker.GetCachedAvailableUpdate();
+        if (string.IsNullOrEmpty(availableVersion))
+        {
+            return;
+        }
+
+        // Verify it's still a valid update (in case user updated but state file wasn't cleared)
+        var currentVersion = VersionInfo.GetCurrentVersion();
+        var currentBuildType = VersionInfo.GetBuildType(currentVersion);
+        if (!VersionInfo.IsUpdateAvailable(currentVersion, availableVersion, currentBuildType))
+        {
+            return;
+        }
+
+        Console.WriteLine();
+        Console.ForegroundColor = ConsoleColor.Yellow;
+        Console.WriteLine($"⚠ A new version of dotnet-dev-certs-plus is available: {availableVersion}");
+        Console.ResetColor();
+        DisplayUpdateInstructions(output);
+    }
+
+    private static void DisplayUpdateInstructions(OutputHelper output)
+    {
+        var currentVersion = VersionInfo.GetCurrentVersion();
+        var buildType = VersionInfo.GetBuildType(currentVersion);
+
+        if (buildType == BuildType.Dev)
+        {
+            output.WriteLine("  Update with: dotnet tool update -g dotnet-dev-certs-plus --add-source https://nuget.pkg.github.com/DamianEdwards/index.json");
+        }
+        else
+        {
+            output.WriteLine("  Update with: dotnet tool update -g dotnet-dev-certs-plus");
+        }
     }
 
     private static async Task<int> HandlePassthroughAsync(
