@@ -1,4 +1,5 @@
 using DotnetDevCertsPlus.Services;
+using Xunit;
 
 namespace DotnetDevCertsPlus.Tests.Unit.Services;
 
@@ -125,7 +126,7 @@ public class ProcessRunnerTests
         var runner = new ProcessRunner();
 
         // Act - use a cross-platform echo approach
-        var result = await runner.RunAsync("dotnet", "--version");
+        var result = await runner.RunAsync("dotnet", "--version", TestContext.Current.CancellationToken);
 
         // Assert
         Assert.True(result.Success);
@@ -140,7 +141,7 @@ public class ProcessRunnerTests
         var runner = new ProcessRunner();
 
         // Act - use a command that will fail
-        var result = await runner.RunAsync("dotnet", "this-is-not-a-valid-command-12345");
+        var result = await runner.RunAsync("dotnet", "this-is-not-a-valid-command-12345", TestContext.Current.CancellationToken);
 
         // Assert
         Assert.False(result.Success);

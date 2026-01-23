@@ -1,5 +1,6 @@
 using DotnetDevCertsPlus.Services;
 using NSubstitute;
+using Xunit;
 
 namespace DotnetDevCertsPlus.Tests.Unit.Services;
 
@@ -22,7 +23,7 @@ public class DevCertServiceTests
             .Returns(new ProcessResult(0, "Certificate is valid", ""));
 
         // Act
-        var result = await _service.CheckStatusAsync();
+        var result = await _service.CheckStatusAsync(TestContext.Current.CancellationToken);
 
         // Assert
         Assert.True(result.Exists);
@@ -38,7 +39,7 @@ public class DevCertServiceTests
             .Returns(new ProcessResult(2, "No valid certificate found", ""));
 
         // Act
-        var result = await _service.CheckStatusAsync();
+        var result = await _service.CheckStatusAsync(TestContext.Current.CancellationToken);
 
         // Assert
         Assert.False(result.Exists);
@@ -53,7 +54,7 @@ public class DevCertServiceTests
             .Returns(new ProcessResult(0, "Certificate is valid", ""));
 
         // Act
-        var result = await _service.EnsureCreatedAsync();
+        var result = await _service.EnsureCreatedAsync(TestContext.Current.CancellationToken);
 
         // Assert
         Assert.True(result);
@@ -72,7 +73,7 @@ public class DevCertServiceTests
             .Returns(new ProcessResult(0, "Certificate created", ""));
 
         // Act
-        var result = await _service.EnsureCreatedAsync();
+        var result = await _service.EnsureCreatedAsync(TestContext.Current.CancellationToken);
 
         // Assert
         Assert.True(result);
@@ -89,7 +90,7 @@ public class DevCertServiceTests
             .Returns(new ProcessResult(1, "", "Failed to create certificate"));
 
         // Act
-        var result = await _service.EnsureCreatedAsync();
+        var result = await _service.EnsureCreatedAsync(TestContext.Current.CancellationToken);
 
         // Assert
         Assert.False(result);
@@ -105,7 +106,7 @@ public class DevCertServiceTests
             .Returns(new ProcessResult(0, "Exported", ""));
 
         // Act
-        var result = await _service.ExportAsync(path, CertificateFormat.Pfx, password);
+        var result = await _service.ExportAsync(path, CertificateFormat.Pfx, password, TestContext.Current.CancellationToken);
 
         // Assert
         Assert.True(result);
@@ -124,7 +125,7 @@ public class DevCertServiceTests
             .Returns(new ProcessResult(0, "Exported", ""));
 
         // Act
-        var result = await _service.ExportAsync(path, CertificateFormat.Pem, null);
+        var result = await _service.ExportAsync(path, CertificateFormat.Pem, null, TestContext.Current.CancellationToken);
 
         // Assert
         Assert.True(result);
@@ -142,7 +143,7 @@ public class DevCertServiceTests
             .Returns(new ProcessResult(1, "", "Export failed"));
 
         // Act
-        var result = await _service.ExportAsync("/tmp/cert.pfx", CertificateFormat.Pfx, "password");
+        var result = await _service.ExportAsync("/tmp/cert.pfx", CertificateFormat.Pfx, "password", TestContext.Current.CancellationToken);
 
         // Assert
         Assert.False(result);
@@ -158,7 +159,7 @@ public class DevCertServiceTests
             .Returns(new ProcessResult(0, "Exported", ""));
 
         // Act
-        await _service.ExportAsync(path, CertificateFormat.Pfx, password);
+        await _service.ExportAsync(path, CertificateFormat.Pfx, password, TestContext.Current.CancellationToken);
 
         // Assert - path should be properly escaped (wrapped in quotes)
         await _mockRunner.Received(1).RunAsync(
@@ -177,7 +178,7 @@ public class DevCertServiceTests
             .Returns(new ProcessResult(0, "Exported", ""));
 
         // Act
-        await _service.ExportAsync(path, CertificateFormat.Pfx, password);
+        await _service.ExportAsync(path, CertificateFormat.Pfx, password, TestContext.Current.CancellationToken);
 
         // Assert - password should be properly escaped
         await _mockRunner.Received(1).RunAsync(

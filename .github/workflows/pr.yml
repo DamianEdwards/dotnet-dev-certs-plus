@@ -27,6 +27,10 @@ jobs:
     
     runs-on: ${{ matrix.os }}
 
+    permissions:
+      checks: write
+      pull-requests: write
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -43,4 +47,22 @@ jobs:
         run: dotnet build --configuration Release --no-restore
 
       - name: Test
-        run: dotnet test test/dotnet-dev-certs-plus.Tests --configuration Release --no-build --verbosity normal
+        run: dotnet test test/dotnet-dev-certs-plus.Tests --configuration Release --no-build --verbosity normal --logger "trx;LogFileName=test-results.trx" --logger "html;LogFileName=test-results.html" --results-directory ./test-results
+
+      - name: Upload test results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: test-results-${{ matrix.os }}
+          path: |
+            ./test-results/*.trx
+            ./test-results/*.html
+          retention-days: 30
+
+      - name: Publish test results
+        uses: dorny/test-reporter@v1
+        if: always()
+        with:
+          name: Tests (${{ matrix.os }})
+          path: ./test-results/*.trx
+          reporter: dotnet-trx

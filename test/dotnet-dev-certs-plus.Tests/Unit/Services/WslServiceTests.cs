@@ -1,6 +1,7 @@
 using System.Runtime.InteropServices;
 using DotnetDevCertsPlus.Services;
 using NSubstitute;
+using Xunit;
 
 namespace DotnetDevCertsPlus.Tests.Unit.Services;
 
@@ -76,7 +77,7 @@ public class WslServiceTests
             .Returns(new ProcessResult(0, "Ubuntu\nDebian\n", ""));
 
         // Act
-        var result = await _service.GetDefaultDistroAsync();
+        var result = await _service.GetDefaultDistroAsync(TestContext.Current.CancellationToken);
 
         // Assert
         Assert.Equal("Ubuntu", result);
@@ -93,7 +94,7 @@ public class WslServiceTests
             .Returns(new ProcessResult(1, "", ""));
 
         // Act
-        var result = await _service.GetDefaultDistroAsync();
+        var result = await _service.GetDefaultDistroAsync(TestContext.Current.CancellationToken);
 
         // Assert
         Assert.Null(result);
@@ -110,7 +111,7 @@ public class WslServiceTests
             .Returns(new ProcessResult(0, "/usr/bin/dotnet", ""));
 
         // Act
-        var result = await _service.CheckDotnetAvailableAsync();
+        var result = await _service.CheckDotnetAvailableAsync(cancellationToken: TestContext.Current.CancellationToken);
 
         // Assert
         Assert.True(result);
@@ -127,7 +128,7 @@ public class WslServiceTests
             .Returns(new ProcessResult(1, "", ""));
 
         // Act
-        var result = await _service.CheckDotnetAvailableAsync();
+        var result = await _service.CheckDotnetAvailableAsync(cancellationToken: TestContext.Current.CancellationToken);
 
         // Assert
         Assert.False(result);
@@ -144,7 +145,7 @@ public class WslServiceTests
             .Returns(new ProcessResult(0, "/usr/bin/dotnet", ""));
 
         // Act
-        var result = await _service.CheckDotnetAvailableAsync("Ubuntu");
+        var result = await _service.CheckDotnetAvailableAsync("Ubuntu", TestContext.Current.CancellationToken);
 
         // Assert
         Assert.True(result);
@@ -162,7 +163,7 @@ public class WslServiceTests
             .Returns(new ProcessResult(0, "hello", ""));
 
         // Act
-        var result = await _service.RunCommandAsync("echo hello");
+        var result = await _service.RunCommandAsync("echo hello", cancellationToken: TestContext.Current.CancellationToken);
 
         // Assert
         Assert.True(result.Success);
@@ -180,7 +181,7 @@ public class WslServiceTests
             .Returns(new ProcessResult(0, "Certificate is valid", ""));
 
         // Act
-        var (exists, trusted) = await _service.CheckCertStatusAsync();
+        var (exists, trusted) = await _service.CheckCertStatusAsync(cancellationToken: TestContext.Current.CancellationToken);
 
         // Assert
         Assert.True(exists);
@@ -198,7 +199,7 @@ public class WslServiceTests
             .Returns(new ProcessResult(1, "No valid certificate", ""));
 
         // Act
-        var (exists, trusted) = await _service.CheckCertStatusAsync();
+        var (exists, trusted) = await _service.CheckCertStatusAsync(cancellationToken: TestContext.Current.CancellationToken);
 
         // Assert
         Assert.False(exists);
@@ -216,7 +217,7 @@ public class WslServiceTests
             .Returns(new ProcessResult(0, "Imported", ""));
 
         // Act
-        var result = await _service.ImportCertAsync(@"C:\temp\cert.pfx", "password", trust: true);
+        var result = await _service.ImportCertAsync(@"C:\temp\cert.pfx", "password", trust: true, cancellationToken: TestContext.Current.CancellationToken);
 
         // Assert
         Assert.True(result);
@@ -237,7 +238,7 @@ public class WslServiceTests
             .Returns(new ProcessResult(0, "Imported", ""));
 
         // Act - use a path/password with dangerous shell chars
-        var result = await _service.ImportCertAsync(@"C:\temp\cert.pfx", "pass'word", trust: false);
+        var result = await _service.ImportCertAsync(@"C:\temp\cert.pfx", "pass'word", trust: false, cancellationToken: TestContext.Current.CancellationToken);
 
         // Assert - should use single quotes (shell-safe escaping)
         Assert.True(result);
@@ -258,7 +259,7 @@ public class WslServiceTests
             .Returns(new ProcessResult(0, "Cleaned", ""));
 
         // Act
-        var result = await _service.CleanCertAsync();
+        var result = await _service.CleanCertAsync(cancellationToken: TestContext.Current.CancellationToken);
 
         // Assert
         Assert.True(result);
@@ -285,7 +286,7 @@ public class WslServiceTests
             .Returns(new ProcessResult(0, "Ubuntu\0\n", ""));
 
         // Act
-        var result = await _service.GetDefaultDistroAsync();
+        var result = await _service.GetDefaultDistroAsync(TestContext.Current.CancellationToken);
 
         // Assert
         Assert.Equal("Ubuntu", result);
