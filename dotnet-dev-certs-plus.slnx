@@ -1,0 +1,8 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/dotnet-dev-certs-plus/dotnet-dev-certs-plus.csproj" />
+  </Folder>
+  <Folder Name="/test/">
+    <Project Path="test/dotnet-dev-certs-plus.Tests/dotnet-dev-certs-plus.Tests.csproj" />
+  </Folder>
+</Solution>

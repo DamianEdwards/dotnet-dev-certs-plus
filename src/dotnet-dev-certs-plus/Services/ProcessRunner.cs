@@ -5,9 +5,14 @@ namespace DotnetDevCertsPlus.Services;
 /// <summary>
 /// Utility for running external processes.
 /// </summary>
-public static class ProcessRunner
+public class ProcessRunner : IProcessRunner
 {
-    public static async Task<ProcessResult> RunAsync(
+    /// <summary>
+    /// Default singleton instance for use when DI is not available.
+    /// </summary>
+    public static ProcessRunner Default { get; } = new();
+
+    public async Task<ProcessResult> RunAsync(
         string fileName,
         string arguments,
         CancellationToken cancellationToken = default)
