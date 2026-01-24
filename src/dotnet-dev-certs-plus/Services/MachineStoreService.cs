@@ -1,4 +1,5 @@
 using System.Runtime.InteropServices;
+using System.Runtime.Versioning;
 using System.Security.Cryptography.X509Certificates;
 using DotnetDevCertsPlus.Models;
 
@@ -10,6 +11,7 @@ namespace DotnetDevCertsPlus.Services;
 public class MachineStoreService : IMachineStoreService
 {
     private const string AspNetHttpsOid = "1.3.6.1.4.1.311.84.1.1";
+    private const string CertFriendlyName = "ASP.NET Core HTTPS development certificate";
     private const string CertFileName = "aspnetcore-dev-cert.crt";
 
     // Linux paths
@@ -164,6 +166,7 @@ public class MachineStoreService : IMachineStoreService
 
     #region Windows Implementation
 
+    [SupportedOSPlatform("windows")]
     private bool CheckWindowsMachineStore()
     {
         using var store = new X509Store(StoreName.My, StoreLocation.LocalMachine);
@@ -171,6 +174,7 @@ public class MachineStoreService : IMachineStoreService
         return FindDevCert(store) is not null;
     }
 
+    [SupportedOSPlatform("windows")]
     private bool CheckWindowsMachineTrust()
     {
         using var store = new X509Store(StoreName.Root, StoreLocation.LocalMachine);
@@ -178,6 +182,7 @@ public class MachineStoreService : IMachineStoreService
         return FindDevCert(store) is not null;
     }
 
+    [SupportedOSPlatform("windows")]
     private bool ImportToWindowsMachineStore(string pfxPath, string password)
     {
         try
@@ -186,6 +191,7 @@ public class MachineStoreService : IMachineStoreService
                 pfxPath,
                 password,
                 X509KeyStorageFlags.MachineKeySet | X509KeyStorageFlags.PersistKeySet);
+            cert.FriendlyName = CertFriendlyName;
 
             using var store = new X509Store(StoreName.My, StoreLocation.LocalMachine);
             store.Open(OpenFlags.ReadWrite);
@@ -205,6 +211,7 @@ public class MachineStoreService : IMachineStoreService
         }
     }
 
+    [SupportedOSPlatform("windows")]
     private bool TrustInWindowsMachineStore(string pfxPath, string password)
     {
         try
@@ -212,6 +219,7 @@ public class MachineStoreService : IMachineStoreService
             var certWithKey = X509CertificateLoader.LoadPkcs12FromFile(pfxPath, password);
             var publicCertBytes = certWithKey.Export(X509ContentType.Cert);
             var publicCert = X509CertificateLoader.LoadCertificate(publicCertBytes);
+            publicCert.FriendlyName = CertFriendlyName;
 
             using var store = new X509Store(StoreName.Root, StoreLocation.LocalMachine);
             store.Open(OpenFlags.ReadWrite);
@@ -246,6 +254,7 @@ public class MachineStoreService : IMachineStoreService
         return null;
     }
 
+    [SupportedOSPlatform("windows")]
     private bool CleanWindowsMachineStore()
     {
         var myStoreSuccess = true;
@@ -287,6 +296,7 @@ public class MachineStoreService : IMachineStoreService
         return myStoreSuccess || rootStoreSuccess;
     }
 
+    [SupportedOSPlatform("windows")]
     private CertificateInfo? GetWindowsCertificateInfo()
     {
         using var myStore = new X509Store(StoreName.My, StoreLocation.LocalMachine);
