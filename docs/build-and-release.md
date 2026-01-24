@@ -228,6 +228,35 @@ This ensures that a failed release can be retried without losing the version num
    - Version bump: `none`
 5. Click **Run workflow**
 
+### Using the GitHub CLI
+
+You can also trigger releases from the command line using the [GitHub CLI](https://cli.github.com/):
+
+**Pre-release:**
+```bash
+gh workflow run release.yml -f release_type=prerelease -f version_bump=none --repo DamianEdwards/dotnet-dev-certs-plus
+```
+
+**Stable release:**
+```bash
+gh workflow run release.yml -f release_type=stable -f version_bump=none --repo DamianEdwards/dotnet-dev-certs-plus
+```
+
+**RTM stage:**
+```bash
+gh workflow run release.yml -f release_type=rtm -f version_bump=none --repo DamianEdwards/dotnet-dev-certs-plus
+```
+
+**Check workflow status:**
+```bash
+gh run list --workflow="release.yml" --repo DamianEdwards/dotnet-dev-certs-plus --limit 1
+```
+
+**Watch a run:**
+```bash
+gh run watch <run-id> --repo DamianEdwards/dotnet-dev-certs-plus
+```
+
 ## Troubleshooting
 
 ### Publish job failed but NuGet push succeeded
