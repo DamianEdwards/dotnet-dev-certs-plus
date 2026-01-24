@@ -5,7 +5,8 @@ This file provides context for AI coding assistants working on this repository.
 ## Project Overview
 
 **dotnet-dev-certs-plus** is a .NET global tool that extends `dotnet dev-certs https` with additional functionality:
-- **Machine store support** (`--store machine`) - Import certificates to system-wide stores
+
+- **Machine store support**(`--store machine`) - Import certificates to system-wide stores
 - **WSL support** (`--wsl`) - Import certificates from Windows host into WSL distributions
 
 The tool is a drop-in replacement for `dotnet dev-certs https` - all standard options pass through to the underlying command.
@@ -31,7 +32,7 @@ dotnet tool install --global --add-source ./src/dotnet-dev-certs-plus/bin/Releas
 
 ## Architecture
 
-```
+```text
 src/dotnet-dev-certs-plus/
 ├── Program.cs                 # Entry point, sets up System.CommandLine
 ├── Commands/
@@ -62,6 +63,7 @@ src/dotnet-dev-certs-plus/
 ## Release Process
 
 See [docs/build-and-release.md](docs/build-and-release.md) for:
-- Versioning scheme (dev builds, pre-releases, stable releases)
+
+- Versioning scheme(dev builds, pre-releases, stable releases)
 - CI/CD pipeline details (three workflows: `ci.yml`, `release.yml`, `pr.yml`)
 - How to trigger releases via GitHub Actions
