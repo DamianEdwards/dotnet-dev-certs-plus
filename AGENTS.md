@@ -52,6 +52,14 @@ src/dotnet-dev-certs-plus/
 - **MachineStoreService**: Platform-specific logic for Windows (certificate stores), Linux (`update-ca-certificates`), and macOS (System Keychain)
 - **WslService**: Executes commands in WSL distributions via `wsl.exe`
 
+## Branching
+
+- **Never commit directly to `main`** - always create a feature branch for changes
+- Before making any changes, check the current branch:
+  - If on `main`, create a new branch first (e.g., `fix/issue-description` or `feature/feature-name`)
+  - If on an existing branch, verify it's appropriate for the changes before proceeding
+- Push branches and open pull requests for review
+
 ## Coding Conventions
 
 - **Target Framework**: .NET 10

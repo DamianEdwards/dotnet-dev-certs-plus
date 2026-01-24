@@ -1,3 +1,4 @@
+using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -147,7 +148,11 @@ public class NuGetClient : INuGetClient
 
     private static HttpClient CreateDefaultHttpClient()
     {
-        var client = new HttpClient
+        var handler = new HttpClientHandler
+        {
+            AutomaticDecompression = DecompressionMethods.GZip | DecompressionMethods.Deflate
+        };
+        var client = new HttpClient(handler)
         {
             Timeout = DefaultTimeout
         };
