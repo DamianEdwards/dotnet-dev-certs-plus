@@ -2,6 +2,8 @@ name: PR
 
 on:
   pull_request:
+    paths-ignore:
+      - '**/*.md'
 
 env:
   DOTNET_NOLOGO: true

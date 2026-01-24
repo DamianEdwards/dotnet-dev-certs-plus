@@ -123,7 +123,7 @@ dotnet dev-certs-plus https --wsl --clean --force
 
 ## Command Reference
 
-```
+```text
 dotnet dev-certs-plus https [options]
 
 Standard Options (passed through to dotnet dev-certs https):
@@ -152,8 +152,8 @@ Extended Options:
 
 The tool automatically checks for updates in the background and notifies you when a new version is available:
 
-```
-⚠ A new version of dotnet-dev-certs-plus is available: 1.0.0
+```text
+⚠ A new versionof dotnet-dev-certs-plus is available: 1.0.0
   Update with: dotnet tool update -g dotnet-dev-certs-plus
 ```
 
@@ -201,7 +201,7 @@ export DOTNET_DEV_CERTS_PLUS_DISABLE_UPDATE_CHECK=1
 | 3 | Certificate not trusted (with --check --trust) |
 | 4 | dotnet not available in WSL |
 
-## How It Works
+## Technical Details
 
 ### Machine Store
 
