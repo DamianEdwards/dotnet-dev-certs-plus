@@ -153,7 +153,7 @@ Extended Options:
 The tool automatically checks for updates in the background and notifies you when a new version is available:
 
 ```text
-⚠ A new versionof dotnet-dev-certs-plus is available: 1.0.0
+⚠ A new version of dotnet-dev-certs-plus is available: 1.0.0
   Update with: dotnet tool update -g dotnet-dev-certs-plus
 ```
 
