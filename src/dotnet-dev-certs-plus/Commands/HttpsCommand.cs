@@ -836,7 +836,7 @@ internal class OutputHelper(bool verbose, bool quiet)
     {
         if (verbose)
         {
-            Console.WriteLine($"[DEBUG] {message}");
+            Console.Error.WriteLine($"[DEBUG] {message}");
         }
     }
 }

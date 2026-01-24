@@ -1,4 +1,5 @@
 using DotnetDevCertsPlus.Services;
+using Microsoft.Extensions.Logging.Abstractions;
 using NSubstitute;
 using Xunit;
 
@@ -16,7 +17,7 @@ public class UpdateCheckerTests : IDisposable
         _mockStateManager = Substitute.For<IUpdateStateManager>();
         _mockNuGetClient = Substitute.For<INuGetClient>();
         _mockGitHubClient = Substitute.For<IGitHubPackagesClient>();
-        _checker = new UpdateChecker(_mockStateManager, _mockNuGetClient, _mockGitHubClient);
+        _checker = new UpdateChecker(_mockStateManager, _mockNuGetClient, _mockGitHubClient, NullLogger<UpdateChecker>.Instance);
 
         // Reset version for each test
         VersionInfo.SetVersionForTesting(null);

@@ -3,11 +3,17 @@ using Xunit;
 
 namespace DotnetDevCertsPlus.Tests.Unit.Services;
 
-public class VersionInfoTests
+public class VersionInfoTests : IDisposable
 {
     public VersionInfoTests()
     {
         // Reset the cached version before each test
+        VersionInfo.SetVersionForTesting(null);
+    }
+
+    public void Dispose()
+    {
+        // Clean up after each test
         VersionInfo.SetVersionForTesting(null);
     }
 
