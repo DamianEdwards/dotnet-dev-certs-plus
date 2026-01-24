@@ -27,14 +27,7 @@ public class ServiceFactory
 
         _loggerFactory = LoggerFactory.Create(builder =>
         {
-            // Console logging to stderr for warnings and above
-            builder.AddConsole(options =>
-            {
-                options.LogToStandardErrorThreshold = LogLevel.Trace;
-            });
-            builder.SetMinimumLevel(LogLevel.Warning);
-
-            // File logging for debug and above
+            // File logging only for update checking (no console output)
             builder.AddFile(options =>
             {
                 options.MinimumLevel = LogLevel.Debug;
