@@ -16,7 +16,7 @@ public class UpdateCheckerTests : IDisposable
         _mockStateManager = Substitute.For<IUpdateStateManager>();
         _mockNuGetClient = Substitute.For<INuGetClient>();
         _mockGitHubClient = Substitute.For<IGitHubPackagesClient>();
-        _checker = new UpdateChecker(_mockStateManager, _mockNuGetClient, _mockGitHubClient);
+        _checker = new UpdateChecker(_mockStateManager, _mockNuGetClient, _mockGitHubClient, NullUpdateLogger.Instance);
 
         // Reset version for each test
         VersionInfo.SetVersionForTesting(null);

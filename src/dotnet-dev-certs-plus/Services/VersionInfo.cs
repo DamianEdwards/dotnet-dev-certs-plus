@@ -1,5 +1,5 @@
 using System.Reflection;
-using System.Text.RegularExpressions;
+using NuGet.Versioning;
 
 namespace DotnetDevCertsPlus.Services;
 
@@ -75,7 +75,13 @@ public static partial class VersionInfo
             return BuildType.Dev;
         }
 
-        // Pre-release builds have a hyphen followed by pre-release identifiers
+        // Use NuGet.Versioning to check for pre-release
+        if (NuGetVersion.TryParse(version, out var nugetVersion))
+        {
+            return nugetVersion.IsPrerelease ? BuildType.PreRelease : BuildType.Stable;
+        }
+
+        // Fallback: check for hyphen (pre-release indicator)
         if (version.Contains('-'))
         {
             return BuildType.PreRelease;
@@ -85,7 +91,7 @@ public static partial class VersionInfo
     }
 
     /// <summary>
-    /// Compares two semantic versions. Returns:
+    /// Compares two semantic versions using NuGet.Versioning. Returns:
     /// -1 if version1 &lt; version2
     ///  0 if version1 == version2
     ///  1 if version1 &gt; version2
@@ -105,34 +111,14 @@ public static partial class VersionInfo
             return 1;
         }
 
-        // Parse into base version and prerelease parts
-        var (base1, pre1) = ParseVersion(version1);
-        var (base2, pre2) = ParseVersion(version2);
-
-        // Compare base versions first
-        var baseComparison = CompareBaseVersions(base1, base2);
-        if (baseComparison != 0)
+        // Use NuGet.Versioning for proper semantic version comparison
+        if (NuGetVersion.TryParse(version1, out var v1) && NuGetVersion.TryParse(version2, out var v2))
         {
-            return baseComparison;
+            return v1.CompareTo(v2);
         }
 
-        // If base versions are equal, compare prerelease
-        // No prerelease > any prerelease (stable is higher than pre-release)
-        if (string.IsNullOrEmpty(pre1) && string.IsNullOrEmpty(pre2))
-        {
-            return 0;
-        }
-        if (string.IsNullOrEmpty(pre1))
-        {
-            return 1; // version1 is stable, version2 is prerelease
-        }
-        if (string.IsNullOrEmpty(pre2))
-        {
-            return -1; // version1 is prerelease, version2 is stable
-        }
-
-        // Both have prerelease, compare them
-        return ComparePrereleaseVersions(pre1, pre2);
+        // Fallback to string comparison if parsing fails
+        return string.Compare(version1, version2, StringComparison.OrdinalIgnoreCase);
     }
 
     /// <summary>
@@ -148,7 +134,6 @@ public static partial class VersionInfo
         var comparison = CompareVersions(currentVersion, newVersion);
         if (comparison >= 0)
         {
-            // Current version is same or newer
             return false;
         }
 
@@ -168,81 +153,6 @@ public static partial class VersionInfo
 
         // For stable builds, only show newer stable
         return newBuildType == BuildType.Stable;
-    }
-
-    private static (string baseVersion, string prerelease) ParseVersion(string version)
-    {
-        // Strip +metadata suffix if present
-        var plusIndex = version.IndexOf('+');
-        if (plusIndex > 0)
-        {
-            version = version[..plusIndex];
-        }
-
-        var hyphenIndex = version.IndexOf('-');
-        if (hyphenIndex < 0)
-        {
-            return (version, string.Empty);
-        }
-
-        return (version[..hyphenIndex], version[(hyphenIndex + 1)..]);
-    }
-
-    private static int CompareBaseVersions(string base1, string base2)
-    {
-        var parts1 = base1.Split('.');
-        var parts2 = base2.Split('.');
-
-        var maxLength = Math.Max(parts1.Length, parts2.Length);
-        for (var i = 0; i < maxLength; i++)
-        {
-            var num1 = i < parts1.Length && int.TryParse(parts1[i], out var n1) ? n1 : 0;
-            var num2 = i < parts2.Length && int.TryParse(parts2[i], out var n2) ? n2 : 0;
-
-            if (num1 < num2) return -1;
-            if (num1 > num2) return 1;
-        }
-
-        return 0;
-    }
-
-    private static int ComparePrereleaseVersions(string pre1, string pre2)
-    {
-        // Split by dots and compare each segment
-        var segments1 = pre1.Split('.');
-        var segments2 = pre2.Split('.');
-
-        var maxLength = Math.Max(segments1.Length, segments2.Length);
-        for (var i = 0; i < maxLength; i++)
-        {
-            var seg1 = i < segments1.Length ? segments1[i] : string.Empty;
-            var seg2 = i < segments2.Length ? segments2[i] : string.Empty;
-
-            // Try to parse as numbers
-            var isNum1 = int.TryParse(seg1, out var num1);
-            var isNum2 = int.TryParse(seg2, out var num2);
-
-            if (isNum1 && isNum2)
-            {
-                if (num1 < num2) return -1;
-                if (num1 > num2) return 1;
-            }
-            else if (isNum1)
-            {
-                return -1; // Numeric < alpha
-            }
-            else if (isNum2)
-            {
-                return 1; // Alpha > numeric
-            }
-            else
-            {
-                var strCompare = string.Compare(seg1, seg2, StringComparison.OrdinalIgnoreCase);
-                if (strCompare != 0) return strCompare;
-            }
-        }
-
-        return 0;
     }
 
     /// <summary>

@@ -56,22 +56,24 @@ public class UpdateChecker : IUpdateChecker
     private readonly IUpdateStateManager _stateManager;
     private readonly INuGetClient _nugetClient;
     private readonly IGitHubPackagesClient _githubClient;
+    private readonly IUpdateLogger _logger;
 
     /// <summary>
     /// Creates a new UpdateChecker with default dependencies.
     /// </summary>
-    public UpdateChecker() : this(new UpdateStateManager(), new NuGetClient(), new GitHubPackagesClient())
+    public UpdateChecker() : this(new UpdateStateManager(), new NuGetClient(), new GitHubPackagesClient(), new UpdateLogger())
     {
     }
 
     /// <summary>
     /// Creates a new UpdateChecker with custom dependencies (for testing).
     /// </summary>
-    public UpdateChecker(IUpdateStateManager stateManager, INuGetClient nugetClient, IGitHubPackagesClient githubClient)
+    public UpdateChecker(IUpdateStateManager stateManager, INuGetClient nugetClient, IGitHubPackagesClient githubClient, IUpdateLogger? logger = null)
     {
         _stateManager = stateManager;
         _nugetClient = nugetClient;
         _githubClient = githubClient;
+        _logger = logger ?? NullUpdateLogger.Instance;
     }
 
     /// <inheritdoc/>
@@ -80,33 +82,46 @@ public class UpdateChecker : IUpdateChecker
         var currentVersion = VersionInfo.GetCurrentVersion();
         var currentBuildType = VersionInfo.GetBuildType(currentVersion);
 
+        _logger.Log("UpdateCheck", $"Started - Current version: {currentVersion}, Build type: {currentBuildType}");
+
         try
         {
             // Always update the last check time
             _stateManager.UpdateLastCheckTime();
+            _logger.Log("UpdateCheck", "Updated last check time");
 
             var allVersions = new List<string>();
 
             // Get versions from NuGet.org
+            _logger.Log("NuGet", $"Querying package: {PackageId}");
             var nugetVersions = await _nugetClient.GetPackageVersionsAsync(PackageId, cancellationToken);
             allVersions.AddRange(nugetVersions);
+            _logger.Log("NuGet", $"Found {nugetVersions.Count} versions: {string.Join(", ", nugetVersions.Take(10))}{(nugetVersions.Count > 10 ? "..." : "")}");
 
             // For dev builds, also check GitHub Packages
             if (currentBuildType == BuildType.Dev)
             {
+                _logger.Log("GitHub", $"Querying package (dev build): {GitHubOwner}/{PackageId}");
                 var githubVersions = await _githubClient.GetPackageVersionsAsync(GitHubOwner, PackageId, cancellationToken);
                 allVersions.AddRange(githubVersions);
+                _logger.Log("GitHub", $"Found {githubVersions.Count} versions");
             }
 
             // Find the latest version that qualifies as an update
             string? latestUpdate = null;
+            _logger.Log("VersionCheck", $"Checking {allVersions.Count} versions for updates");
 
             foreach (var version in allVersions)
             {
-                if (VersionInfo.IsUpdateAvailable(currentVersion, version, currentBuildType))
+                var isUpdate = VersionInfo.IsUpdateAvailable(currentVersion, version, currentBuildType);
+                var comparison = VersionInfo.CompareVersions(currentVersion, version);
+                _logger.Log("VersionCheck", $"  {version}: compare={comparison}, isUpdate={isUpdate}");
+                
+                if (isUpdate)
                 {
                     if (latestUpdate is null || VersionInfo.CompareVersions(latestUpdate, version) < 0)
                     {
+                        _logger.Log("VersionCheck", $"New candidate update: {version} (previous: {latestUpdate ?? "none"})");
                         latestUpdate = version;
                     }
                 }
@@ -116,11 +131,15 @@ public class UpdateChecker : IUpdateChecker
             if (latestUpdate is not null)
             {
                 _stateManager.SetAvailableUpdate(latestUpdate);
+                _logger.Log("UpdateCheck", $"Update available: {latestUpdate} - wrote to state file");
             }
             else
             {
                 _stateManager.ClearAvailableUpdate();
+                _logger.Log("UpdateCheck", "No update available - cleared state file");
             }
+
+            _logger.Log("UpdateCheck", $"Completed successfully - UpdateAvailable: {latestUpdate is not null}");
 
             return new UpdateCheckResult(
                 Success: true,
@@ -128,8 +147,9 @@ public class UpdateChecker : IUpdateChecker
                 CurrentVersion: currentVersion,
                 UpdateAvailable: latestUpdate is not null);
         }
-        catch
+        catch (Exception ex)
         {
+            _logger.Log("UpdateCheck", $"Failed with exception: {ex.GetType().Name}: {ex.Message}");
             // Don't clear existing state on error - keep showing old update if available
             return new UpdateCheckResult(
                 Success: false,
