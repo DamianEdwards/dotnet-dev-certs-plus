@@ -1,3 +1,4 @@
+using System.Threading;
 using Microsoft.Extensions.Logging;
 
 namespace DotnetDevCertsPlus.Services.Logging;
@@ -9,7 +10,7 @@ public sealed class FileLogger : ILogger
 {
     private readonly string _categoryName;
     private readonly FileLoggerOptions _options;
-    private readonly object _lock = new();
+    private readonly Lock _lock = new();
 
     public FileLogger(string categoryName, FileLoggerOptions options)
     {
