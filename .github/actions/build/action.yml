@@ -22,8 +22,8 @@ runs:
     - name: Build
       run: |
         if [ -n "${{ inputs.version }}" ]; then
-          dotnet build --configuration Release --no-restore -p:Version=${{ inputs.version }}
+          dotnet build --configuration Release --no-restore -p:Version=${{ inputs.version }} -p:ContinuousIntegrationBuild=true
         else
-          dotnet build --configuration Release --no-restore
+          dotnet build --configuration Release --no-restore -p:ContinuousIntegrationBuild=true
         fi
       shell: bash
