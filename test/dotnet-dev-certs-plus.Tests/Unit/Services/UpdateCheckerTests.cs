@@ -148,6 +148,98 @@ public class UpdateCheckerTests : IDisposable
         Assert.Equal("1.0.0", result.LatestVersion);
     }
 
+    [Fact]
+    public async Task CheckForUpdateAsync_PreReleaseBuild_OnlyChecksNuGet()
+    {
+        // Arrange
+        VersionInfo.SetVersionForTesting("1.0.0-pre.1");
+        _mockNuGetClient.GetPackageVersionsAsync(Arg.Any<string>(), Arg.Any<CancellationToken>())
+            .Returns(new List<string> { "1.0.0-pre.2" });
+
+        // Act
+        var result = await _checker.CheckForUpdateAsync(TestContext.Current.CancellationToken);
+
+        // Assert
+        await _mockNuGetClient.Received(1).GetPackageVersionsAsync(Arg.Any<string>(), Arg.Any<CancellationToken>());
+        await _mockGitHubClient.DidNotReceive().GetPackageVersionsAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>());
+        Assert.True(result.UpdateAvailable);
+        _mockStateManager.Received(1).SetAvailableUpdate("1.0.0-pre.2");
+    }
+
+    [Fact]
+    public async Task CheckForUpdateAsync_PreReleaseBuild_AcceptsNewerPreRelease()
+    {
+        // Arrange
+        VersionInfo.SetVersionForTesting("1.0.0-pre.1");
+        _mockNuGetClient.GetPackageVersionsAsync(Arg.Any<string>(), Arg.Any<CancellationToken>())
+            .Returns(new List<string> { "1.0.0-pre.2", "1.0.0-pre.3" });
+
+        // Act
+        var result = await _checker.CheckForUpdateAsync(TestContext.Current.CancellationToken);
+
+        // Assert
+        Assert.True(result.UpdateAvailable);
+        Assert.Equal("1.0.0-pre.3", result.LatestVersion);
+        _mockStateManager.Received(1).SetAvailableUpdate("1.0.0-pre.3");
+    }
+
+    [Fact]
+    public async Task CheckForUpdateAsync_DevBuild_AcceptsStableFromNuGet()
+    {
+        // Arrange
+        VersionInfo.SetVersionForTesting("1.0.0-pre.1.dev.1");
+        _mockNuGetClient.GetPackageVersionsAsync(Arg.Any<string>(), Arg.Any<CancellationToken>())
+            .Returns(new List<string> { "1.0.0" });
+        _mockGitHubClient.GetPackageVersionsAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>())
+            .Returns(new List<string>());
+
+        // Act
+        var result = await _checker.CheckForUpdateAsync(TestContext.Current.CancellationToken);
+
+        // Assert
+        Assert.True(result.UpdateAvailable);
+        Assert.Equal("1.0.0", result.LatestVersion);
+        _mockStateManager.Received(1).SetAvailableUpdate("1.0.0");
+    }
+
+    [Fact]
+    public async Task CheckForUpdateAsync_DevBuild_AcceptsPreReleaseFromNuGet()
+    {
+        // Arrange
+        VersionInfo.SetVersionForTesting("1.0.0-pre.1.dev.1");
+        _mockNuGetClient.GetPackageVersionsAsync(Arg.Any<string>(), Arg.Any<CancellationToken>())
+            .Returns(new List<string> { "1.0.0-pre.2" });
+        _mockGitHubClient.GetPackageVersionsAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>())
+            .Returns(new List<string>());
+
+        // Act
+        var result = await _checker.CheckForUpdateAsync(TestContext.Current.CancellationToken);
+
+        // Assert
+        Assert.True(result.UpdateAvailable);
+        Assert.Equal("1.0.0-pre.2", result.LatestVersion);
+        _mockStateManager.Received(1).SetAvailableUpdate("1.0.0-pre.2");
+    }
+
+    [Fact]
+    public async Task CheckForUpdateAsync_DevBuild_AcceptsNewerDevFromGitHub()
+    {
+        // Arrange
+        VersionInfo.SetVersionForTesting("1.0.0-pre.1.dev.1");
+        _mockNuGetClient.GetPackageVersionsAsync(Arg.Any<string>(), Arg.Any<CancellationToken>())
+            .Returns(new List<string>());
+        _mockGitHubClient.GetPackageVersionsAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>())
+            .Returns(new List<string> { "1.0.0-pre.1.dev.2", "1.0.0-pre.1.dev.3" });
+
+        // Act
+        var result = await _checker.CheckForUpdateAsync(TestContext.Current.CancellationToken);
+
+        // Assert
+        Assert.True(result.UpdateAvailable);
+        Assert.Equal("1.0.0-pre.1.dev.3", result.LatestVersion);
+        _mockStateManager.Received(1).SetAvailableUpdate("1.0.0-pre.1.dev.3");
+    }
+
     #endregion
 
     #region GetCachedAvailableUpdate Tests
