@@ -1,6 +1,8 @@
 using System.Net.Http.Json;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace DotnetDevCertsPlus.Services;
 
@@ -25,22 +27,22 @@ public class NuGetClient : INuGetClient
     private static readonly TimeSpan DefaultTimeout = TimeSpan.FromSeconds(10);
 
     private readonly HttpClient _httpClient;
-    private readonly IUpdateLogger _logger;
+    private readonly ILogger<NuGetClient> _logger;
 
     /// <summary>
     /// Creates a new NuGetClient with a default HttpClient.
     /// </summary>
-    public NuGetClient() : this(CreateDefaultHttpClient(), new UpdateLogger())
+    public NuGetClient(ILoggerFactory loggerFactory) : this(CreateDefaultHttpClient(), loggerFactory.CreateLogger<NuGetClient>())
     {
     }
 
     /// <summary>
     /// Creates a new NuGetClient with a custom HttpClient (for testing).
     /// </summary>
-    public NuGetClient(HttpClient httpClient, IUpdateLogger? logger = null)
+    public NuGetClient(HttpClient httpClient, ILogger<NuGetClient>? logger = null)
     {
         _httpClient = httpClient;
-        _logger = logger ?? NullUpdateLogger.Instance;
+        _logger = logger ?? NullLogger<NuGetClient>.Instance;
     }
 
     /// <inheritdoc/>
@@ -49,28 +51,28 @@ public class NuGetClient : INuGetClient
         try
         {
             // Get the service index to find the registrations base URL
-            _logger.Log("NuGetClient", $"Fetching service index from {NuGetServiceIndexUrl}");
+            _logger.LogDebug("Fetching service index from {Url}", NuGetServiceIndexUrl);
             var registrationsBaseUrl = await GetRegistrationsBaseUrlAsync(cancellationToken);
             if (string.IsNullOrEmpty(registrationsBaseUrl))
             {
-                _logger.Log("NuGetClient", "Failed to get registrations base URL from service index");
+                _logger.LogWarning("Failed to get registrations base URL from service index");
                 return [];
             }
-            _logger.Log("NuGetClient", $"Registrations base URL: {registrationsBaseUrl}");
+            _logger.LogDebug("Registrations base URL: {Url}", registrationsBaseUrl);
 
             // Query for package versions
             var registrationUrl = $"{registrationsBaseUrl.TrimEnd('/')}/{packageId.ToLowerInvariant()}/index.json";
-            _logger.Log("NuGetClient", $"Fetching package registration from {registrationUrl}");
+            _logger.LogDebug("Fetching package registration from {Url}", registrationUrl);
             
             var registration = await _httpClient.GetFromJsonAsync<RegistrationIndex>(registrationUrl, cancellationToken);
             
             if (registration?.Items is null)
             {
-                _logger.Log("NuGetClient", "Registration response was null or had no items");
+                _logger.LogDebug("Registration response was null or had no items");
                 return [];
             }
 
-            _logger.Log("NuGetClient", $"Found {registration.Items.Count} registration pages");
+            _logger.LogDebug("Found {Count} registration pages", registration.Items.Count);
 
             var versions = new List<string>();
 
@@ -83,13 +85,13 @@ public class NuGetClient : INuGetClient
                         .Where(i => i.CatalogEntry?.Version is not null)
                         .Select(i => i.CatalogEntry!.Version!)
                         .ToList();
-                    _logger.Log("NuGetClient", $"Page has {pageVersions.Count} inline versions");
+                    _logger.LogDebug("Page has {Count} inline versions", pageVersions.Count);
                     versions.AddRange(pageVersions);
                 }
                 else if (!string.IsNullOrEmpty(page.Id))
                 {
                     // Need to fetch the page
-                    _logger.Log("NuGetClient", $"Fetching page from {page.Id}");
+                    _logger.LogDebug("Fetching page from {Url}", page.Id);
                     var pageData = await _httpClient.GetFromJsonAsync<RegistrationPage>(page.Id, cancellationToken);
                     if (pageData?.Items is not null)
                     {
@@ -97,18 +99,18 @@ public class NuGetClient : INuGetClient
                             .Where(i => i.CatalogEntry?.Version is not null)
                             .Select(i => i.CatalogEntry!.Version!)
                             .ToList();
-                        _logger.Log("NuGetClient", $"Fetched page has {pageVersions.Count} versions");
+                        _logger.LogDebug("Fetched page has {Count} versions", pageVersions.Count);
                         versions.AddRange(pageVersions);
                     }
                 }
             }
 
-            _logger.Log("NuGetClient", $"Total versions found: {versions.Count}");
+            _logger.LogDebug("Total versions found: {Count}", versions.Count);
             return versions;
         }
         catch (Exception ex)
         {
-            _logger.Log("NuGetClient", $"Exception: {ex.GetType().Name}: {ex.Message}");
+            _logger.LogWarning(ex, "Failed to get package versions");
             // Silently fail - update checking should not interrupt normal operation
             return [];
         }
@@ -126,11 +128,11 @@ public class NuGetClient : INuGetClient
             
             if (url is null)
             {
-                _logger.Log("NuGetClient", $"Could not find resource type '{RegistrationsBaseUrlType}' in service index");
+                _logger.LogDebug("Could not find resource type '{Type}' in service index", RegistrationsBaseUrlType);
                 if (serviceIndex?.Resources is not null)
                 {
                     var types = serviceIndex.Resources.Select(r => r.Type).Distinct().Take(10);
-                    _logger.Log("NuGetClient", $"Available types: {string.Join(", ", types)}");
+                    _logger.LogDebug("Available types: {Types}", string.Join(", ", types));
                 }
             }
             
@@ -138,7 +140,7 @@ public class NuGetClient : INuGetClient
         }
         catch (Exception ex)
         {
-            _logger.Log("NuGetClient", $"GetRegistrationsBaseUrl exception: {ex.GetType().Name}: {ex.Message}");
+            _logger.LogWarning(ex, "Failed to get registrations base URL");
             return null;
         }
     }
