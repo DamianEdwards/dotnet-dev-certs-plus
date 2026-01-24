@@ -239,7 +239,6 @@ public class MachineStoreService : IMachineStoreService
         }
     }
 
-    [SupportedOSPlatform("windows")]
     private static X509Certificate2? FindDevCert(X509Store store)
     {
         foreach (var cert in store.Certificates)
