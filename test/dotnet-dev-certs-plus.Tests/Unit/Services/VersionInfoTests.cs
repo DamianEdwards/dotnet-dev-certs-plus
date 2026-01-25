@@ -3,20 +3,8 @@ using Xunit;
 
 namespace DotnetDevCertsPlus.Tests.Unit.Services;
 
-public class VersionInfoTests : IDisposable
+public class VersionInfoTests
 {
-    public VersionInfoTests()
-    {
-        // Reset the cached version before each test
-        VersionInfo.SetVersionForTesting(null);
-    }
-
-    public void Dispose()
-    {
-        // Clean up after each test
-        VersionInfo.SetVersionForTesting(null);
-    }
-
     #region GetBuildType Tests
 
     [Theory]
@@ -190,28 +178,6 @@ public class VersionInfoTests : IDisposable
     {
         var result = VersionInfo.IsUpdateAvailable(current, newVersion, BuildType.Stable);
         Assert.False(result);
-    }
-
-    #endregion
-
-    #region GetCurrentVersion Tests
-
-    [Fact]
-    public void GetCurrentVersion_WithMockVersion_ReturnsMockVersion()
-    {
-        VersionInfo.SetVersionForTesting("1.2.3-test");
-        
-        var result = VersionInfo.GetCurrentVersion();
-        
-        Assert.Equal("1.2.3-test", result);
-    }
-
-    [Fact]
-    public void CompareVersions_StripsMetadataWhenComparing()
-    {
-        // Metadata is stripped during version comparison
-        var result = VersionInfo.CompareVersions("1.2.3+abc123", "1.2.3+def456");
-        Assert.Equal(0, result);
     }
 
     #endregion

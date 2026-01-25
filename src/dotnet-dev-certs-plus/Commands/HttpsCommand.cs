@@ -244,11 +244,12 @@ public static class HttpsCommand
 
             var output = new OutputHelper(verbose, quiet);
             var updateChecker = serviceFactory.CreateUpdateChecker();
+            var versionProvider = serviceFactory.CreateVersionInfoProvider();
 
             // Handle --check-update flag (used by background process)
             if (checkUpdate)
             {
-                return await HandleCheckUpdateAsync(updateChecker, output, cancellationToken);
+                return await HandleCheckUpdateAsync(updateChecker, versionProvider, output, cancellationToken);
             }
 
             // Start background update check if needed (fire and forget)
@@ -304,7 +305,7 @@ public static class HttpsCommand
             // Check for and display update notification (unless quiet mode or JSON output)
             if (!quiet && !checkTrustMachineReadable)
             {
-                DisplayUpdateNotification(updateChecker, output);
+                DisplayUpdateNotification(updateChecker, versionProvider, output);
             }
 
             return exitCode;
@@ -313,9 +314,9 @@ public static class HttpsCommand
         return command;
     }
 
-    private static async Task<int> HandleCheckUpdateAsync(IUpdateChecker updateChecker, OutputHelper output, CancellationToken cancellationToken)
+    private static async Task<int> HandleCheckUpdateAsync(IUpdateChecker updateChecker, IVersionInfoProvider versionProvider, OutputHelper output, CancellationToken cancellationToken)
     {
-        output.WriteLine($"Checking for updates (current version: {VersionInfo.GetCurrentVersion()})...");
+        output.WriteLine($"Checking for updates (current version: {versionProvider.GetCurrentVersion()})...");
         
         var result = await updateChecker.CheckForUpdateAsync(cancellationToken);
         
@@ -328,7 +329,7 @@ public static class HttpsCommand
         if (result.UpdateAvailable)
         {
             output.WriteLine($"A new version is available: {result.LatestVersion}");
-            DisplayUpdateInstructions(output);
+            DisplayUpdateInstructions(versionProvider, output);
         }
         else
         {
@@ -338,7 +339,7 @@ public static class HttpsCommand
         return ExitCodeSuccess;
     }
 
-    private static void DisplayUpdateNotification(IUpdateChecker updateChecker, OutputHelper output)
+    private static void DisplayUpdateNotification(IUpdateChecker updateChecker, IVersionInfoProvider versionProvider, OutputHelper output)
     {
         var availableVersion = updateChecker.GetCachedAvailableUpdate();
         if (string.IsNullOrEmpty(availableVersion))
@@ -347,8 +348,8 @@ public static class HttpsCommand
         }
 
         // Verify it's still a valid update (in case user updated but state file wasn't cleared)
-        var currentVersion = VersionInfo.GetCurrentVersion();
-        var currentBuildType = VersionInfo.GetBuildType(currentVersion);
+        var currentVersion = versionProvider.GetCurrentVersion();
+        var currentBuildType = versionProvider.GetCurrentBuildType();
         if (!VersionInfo.IsUpdateAvailable(currentVersion, availableVersion, currentBuildType))
         {
             return;
@@ -364,22 +365,21 @@ public static class HttpsCommand
         {
             Console.ResetColor();
         }
-        DisplayUpdateInstructions(output);
+        DisplayUpdateInstructions(versionProvider, output);
     }
 
-    private static void DisplayUpdateInstructions(OutputHelper output)
+    private static void DisplayUpdateInstructions(IVersionInfoProvider versionProvider, OutputHelper output)
     {
-        var command = GetUpdateCommand();
+        var command = GetUpdateCommand(versionProvider);
         output.WriteError($"   Update with: {command}");
     }
 
     /// <summary>
     /// Gets the appropriate update command based on the current build type.
     /// </summary>
-    internal static string GetUpdateCommand()
+    internal static string GetUpdateCommand(IVersionInfoProvider versionProvider)
     {
-        var currentVersion = VersionInfo.GetCurrentVersion();
-        var buildType = VersionInfo.GetBuildType(currentVersion);
+        var buildType = versionProvider.GetCurrentBuildType();
         return GetUpdateCommand(buildType);
     }
 
