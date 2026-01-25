@@ -65,7 +65,7 @@ src/dotnet-dev-certs-plus/
 - **Target Framework**: .NET 10
 - **Language**: C# with nullable reference types enabled
 - **Implicit usings**: Enabled
-- **CLI Framework**: System.CommandLine 2.0.0-beta5
+- **CLI Framework**: System.CommandLine 2.0.2
 - **Packaging**: .NET global tool (`PackAsTool=true`)
 
 ## Release Process
