@@ -151,10 +151,9 @@ jobs:
 
       - name: Build RC package
         if: steps.version.outputs.skip != 'true'
-        run: |
-          dotnet build src/dotnet-dev-certs-plus/dotnet-dev-certs-plus.csproj \
-            --configuration Release \
-            -p:Version=${{ steps.version.outputs.rc_version }}
+        uses: ./.github/actions/build
+        with:
+          version: ${{ steps.version.outputs.rc_version }}
 
       - name: Pack RC package
         if: steps.version.outputs.skip != 'true'
