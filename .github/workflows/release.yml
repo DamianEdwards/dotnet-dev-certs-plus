@@ -28,17 +28,19 @@ env:
   DOTNET_CLI_TELEMETRY_OPTOUT: true
 
 jobs:
-  build:
+  prepare:
     runs-on: ubuntu-latest
 
     permissions:
       contents: write
+      actions: read
 
     outputs:
       version: ${{ steps.version.outputs.version }}
       base_version: ${{ steps.version.outputs.base_version }}
       confirmed_state: ${{ steps.version.outputs.confirmed_state }}
       release_type: ${{ steps.version.outputs.release_type }}
+      ci_run_id: ${{ steps.version.outputs.ci_run_id }}
 
     steps:
       - name: Checkout
@@ -46,7 +48,7 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Calculate version
+      - name: Calculate version and find CI run
         id: version
         env:
           GH_TOKEN: ${{ github.token }}
@@ -63,6 +65,7 @@ jobs:
           PRE_NUMBER=1
           DEV_NUMBER=0
           PENDING_RELEASE="none"
+          CI_RUN_ID=""
 
           # Try to read state from dev draft release body
           DEV_RELEASE_BODY=$(gh release view dev --json body --jq '.body // empty' 2>/dev/null || echo "")
@@ -79,6 +82,13 @@ jobs:
               PENDING_RELEASE="${PENDING_RELEASE:-none}"
               echo "Read state from dev release: $MAJOR.$MINOR.$PATCH, stage=$STAGE, pre=$PRE_NUMBER, dev=$DEV_NUMBER, pending=$PENDING_RELEASE"
             fi
+
+            # Try to get the CI run ID from the dev release
+            CI_RUN_LINE=$(echo "$DEV_RELEASE_BODY" | grep -o '<!-- CI_RUN_ID: [^>]* -->' | head -1 || echo "")
+            if [ -n "$CI_RUN_LINE" ]; then
+              CI_RUN_ID=$(echo "$CI_RUN_LINE" | sed 's/<!-- CI_RUN_ID: \(.*\) -->/\1/')
+              echo "Found CI run ID from dev release: $CI_RUN_ID"
+            fi
           else
             # No dev release, check for latest stable release to determine base version
             LATEST_STABLE=$(gh release list --exclude-drafts --exclude-pre-releases --limit 1 --json tagName --jq '.[0].tagName // empty' | sed 's/^v//')
@@ -93,6 +103,17 @@ jobs:
               fi
             fi
             echo "Initialized from stable release or defaults: $MAJOR.$MINOR.$PATCH"
+          fi
+
+          # If no CI run ID found in dev release, find the latest successful CI run
+          if [ -z "$CI_RUN_ID" ]; then
+            echo "No CI run ID in dev release, searching for latest successful CI run..."
+            CI_RUN_ID=$(gh run list --workflow=ci.yml --branch=main --status=success --limit=1 --json databaseId --jq '.[0].databaseId // empty')
+            if [ -z "$CI_RUN_ID" ]; then
+              echo "::error::No successful CI run found on main branch. Cannot release without a CI build."
+              exit 1
+            fi
+            echo "Found latest successful CI run: $CI_RUN_ID"
           fi
 
           # Check for pending release retry scenario
@@ -133,6 +154,9 @@ jobs:
             PRE_NUMBER=1
             DEV_NUMBER=0
             echo "Applied $VERSION_BUMP bump: $MAJOR.$MINOR.$PATCH"
+            # Version bump means we can't use the RC artifact - need a new CI run
+            echo "::error::Version bump requested but release workflow now downloads from CI. Please push a commit to main first to trigger a new CI build with the bumped version."
+            exit 1
           fi
 
           BASE_VERSION="${MAJOR}.${MINOR}.${PATCH}"
@@ -143,7 +167,7 @@ jobs:
             prerelease)
               # Ship pre-release to NuGet
               VERSION="${BASE_VERSION}-pre.${PRE_NUMBER}.rel"
-              # For build job: store current state with pending flag (don't increment yet)
+              # For prepare job: store current state with pending flag (don't increment yet)
               # Publish job will increment after successful push
               NEXT_PRE_NUMBER=$PRE_NUMBER
               NEXT_DEV_NUMBER=$DEV_NUMBER
@@ -156,7 +180,7 @@ jobs:
               echo "Pre-release: $VERSION (pending confirmation)"
               ;;
             rtm)
-              # Switch to RTM stage
+              # Switch to RTM stage - this doesn't publish, just changes state
               STAGE="rtm"
               DEV_NUMBER=$((DEV_NUMBER + 1))
               VERSION="${BASE_VERSION}-rtm.dev.${DEV_NUMBER}"
@@ -172,7 +196,7 @@ jobs:
             stable)
               # Ship stable release to NuGet
               VERSION="${BASE_VERSION}"
-              # For build job: store current state with pending flag (don't increment yet)
+              # For prepare job: store current state with pending flag (don't increment yet)
               NEXT_PRE_NUMBER=$PRE_NUMBER
               NEXT_DEV_NUMBER=$DEV_NUMBER
               NEXT_STAGE=$STAGE
@@ -196,6 +220,7 @@ jobs:
           echo "version=${VERSION}" >> $GITHUB_OUTPUT
           echo "base_version=${BASE_VERSION}" >> $GITHUB_OUTPUT
           echo "release_type=${RELEASE_TYPE}" >> $GITHUB_OUTPUT
+          echo "ci_run_id=${CI_RUN_ID}" >> $GITHUB_OUTPUT
 
           # Output the confirmed state for publish job to use
           if [ "$RELEASE_TYPE" = "stable" ]; then
@@ -204,16 +229,17 @@ jobs:
             echo "confirmed_state=${BASE_VERSION}|${CONFIRMED_STAGE}|${CONFIRMED_PRE_NUMBER}|${CONFIRMED_DEV_NUMBER}|none" >> $GITHUB_OUTPUT
           fi
 
-          # Update dev release with pending state
-          if gh release view dev --json isDraft &>/dev/null; then
-            gh release delete dev --yes
-          fi
+          # Update dev release with pending state (only for prerelease/stable)
+          if [ "$RELEASE_TYPE" != "rtm" ]; then
+            if gh release view dev --json isDraft &>/dev/null; then
+              gh release delete dev --yes
+            fi
 
-          gh release create dev \
-            --draft \
-            --prerelease \
-            --title "Development Build" \
-            --notes "## Development Build
+            gh release create dev \
+              --draft \
+              --prerelease \
+              --title "Development Build" \
+              --notes "## Development Build
 
           **Pending Release:** ${RELEASE_TYPE} v${VERSION}
           **Commit:** ${{ github.sha }}
@@ -223,56 +249,75 @@ jobs:
 
           <!-- VERSION_STATE: ${BASE_VERSION}|${NEXT_STAGE}|${NEXT_PRE_NUMBER}|${NEXT_DEV_NUMBER}|${STORE_STATE_PENDING} -->
           "
+          fi
 
           # Summary
           echo "## Version Information" >> $GITHUB_STEP_SUMMARY
           echo "- **Version:** ${VERSION}" >> $GITHUB_STEP_SUMMARY
           echo "- **Base Version:** ${BASE_VERSION}" >> $GITHUB_STEP_SUMMARY
           echo "- **Release Type:** ${RELEASE_TYPE}" >> $GITHUB_STEP_SUMMARY
+          echo "- **CI Run ID:** ${CI_RUN_ID}" >> $GITHUB_STEP_SUMMARY
           if [ "$IS_RETRY" = "true" ]; then
             echo "- **Retry:** Yes (reusing pending version)" >> $GITHUB_STEP_SUMMARY
           fi
 
-      - name: Build
-        uses: ./.github/actions/build
-        with:
-          version: ${{ steps.version.outputs.version }}
-
-      - name: Pack
-        run: |
-          dotnet pack src/dotnet-dev-certs-plus/dotnet-dev-certs-plus.csproj \
-            --configuration Release \
-            --no-build \
-            --output ./artifacts \
-            -p:PackageVersion=${{ steps.version.outputs.version }}
-
-      - name: Upload package artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: package
-          path: ./artifacts/*.nupkg
-          retention-days: 90
-
   publish:
     runs-on: ubuntu-latest
-    needs: build
-    if: needs.build.outputs.release_type != 'rtm'
+    needs: prepare
+    if: needs.prepare.outputs.release_type != 'rtm'
 
     environment: nuget.org
 
     permissions:
       contents: write
       id-token: write
+      actions: read
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Download package artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: package
-          path: ./artifacts
+      - name: Download RC package from CI run
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          CI_RUN_ID="${{ needs.prepare.outputs.ci_run_id }}"
+          echo "Downloading package-rc artifact from CI run $CI_RUN_ID..."
+          
+          mkdir -p ./artifacts
+          gh run download "$CI_RUN_ID" --name package-rc --dir ./artifacts
+          
+          # Verify download succeeded
+          if [ ! -f ./artifacts/*.nupkg ]; then
+            echo "::error::Failed to download RC package artifact from CI run $CI_RUN_ID"
+            exit 1
+          fi
+          
+          echo "Downloaded package:"
+          ls -la ./artifacts/
+
+      - name: Verify package version
+        run: |
+          EXPECTED_VERSION="${{ needs.prepare.outputs.version }}"
+          PACKAGE_FILE=$(ls ./artifacts/*.nupkg | head -1)
+          PACKAGE_NAME=$(basename "$PACKAGE_FILE")
+          
+          echo "Expected version: $EXPECTED_VERSION"
+          echo "Package file: $PACKAGE_NAME"
+          
+          # Extract version from package filename (format: name.version.nupkg)
+          # dotnet-dev-certs-plus.0.0.1-pre.1.rel.nupkg
+          PACKAGE_VERSION=$(echo "$PACKAGE_NAME" | sed 's/dotnet-dev-certs-plus\.\(.*\)\.nupkg/\1/')
+          echo "Package version: $PACKAGE_VERSION"
+          
+          if [ "$PACKAGE_VERSION" != "$EXPECTED_VERSION" ]; then
+            echo "::error::Package version mismatch! Expected '$EXPECTED_VERSION' but package has '$PACKAGE_VERSION'"
+            echo "This can happen if the version state was modified after the last CI run."
+            echo "Please push a new commit to main to trigger a fresh CI build."
+            exit 1
+          fi
+          
+          echo "✓ Package version matches expected version"
 
       - name: Setup .NET
         uses: actions/setup-dotnet@v4
@@ -293,11 +338,11 @@ jobs:
             --skip-duplicate
 
       - name: Create GitHub release (prerelease)
-        if: needs.build.outputs.release_type == 'prerelease'
+        if: needs.prepare.outputs.release_type == 'prerelease'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          VERSION="${{ needs.build.outputs.version }}"
+          VERSION="${{ needs.prepare.outputs.version }}"
 
           # Skip if release already exists (retry scenario)
           if gh release view "v${VERSION}" --repo ${{ github.repository }} &>/dev/null; then
@@ -326,11 +371,11 @@ jobs:
             ./artifacts/*.nupkg
 
       - name: Create GitHub release (stable)
-        if: needs.build.outputs.release_type == 'stable'
+        if: needs.prepare.outputs.release_type == 'stable'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          VERSION="${{ needs.build.outputs.version }}"
+          VERSION="${{ needs.prepare.outputs.version }}"
 
           # Skip if release already exists (retry scenario)
           if gh release view "v${VERSION}" --repo ${{ github.repository }} &>/dev/null; then
@@ -369,8 +414,8 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          CONFIRMED_STATE="${{ needs.build.outputs.confirmed_state }}"
-          VERSION="${{ needs.build.outputs.version }}"
+          CONFIRMED_STATE="${{ needs.prepare.outputs.confirmed_state }}"
+          VERSION="${{ needs.prepare.outputs.version }}"
 
           echo "Confirming version state after successful publish: $CONFIRMED_STATE"
 
@@ -410,8 +455,8 @@ jobs:
   # For RTM, just confirm state immediately (no NuGet publish needed)
   confirm-rtm:
     runs-on: ubuntu-latest
-    needs: build
-    if: needs.build.outputs.release_type == 'rtm'
+    needs: prepare
+    if: needs.prepare.outputs.release_type == 'rtm'
 
     permissions:
       contents: write
@@ -424,8 +469,8 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          CONFIRMED_STATE="${{ needs.build.outputs.confirmed_state }}"
-          VERSION="${{ needs.build.outputs.version }}"
+          CONFIRMED_STATE="${{ needs.prepare.outputs.confirmed_state }}"
+          VERSION="${{ needs.prepare.outputs.version }}"
 
           echo "Confirming RTM state: $CONFIRMED_STATE"
 

@@ -8,11 +8,11 @@ The project uses three GitHub Actions workflows:
 
 | Workflow | File | Trigger | Purpose |
 |----------|------|---------|---------|
-| **CI** | `ci.yml` | Push to `main` | Dev builds → GitHub Packages |
-| **Release** | `release.yml` | Manual dispatch | Releases → NuGet.org |
+| **CI** | `ci.yml` | Push to `main` | Dev builds → GitHub Packages, RC artifacts for release |
+| **Release** | `release.yml` | Manual dispatch | Downloads RC from CI → NuGet.org |
 | **PR** | `pr.yml` | Pull requests | Build verification |
 
-All workflows share a common build action (`.github/actions/build/`) for consistency.
+The CI workflow builds both a dev package (published to GitHub Packages) and a release candidate (RC) package (stored as an artifact). The Release workflow downloads the RC package from the latest CI run rather than rebuilding, ensuring releases use the exact tested binaries.
 
 ## Workflow Structure
 
@@ -31,12 +31,19 @@ This action is used by all three workflows for consistency.
 
 Runs automatically on every push to `main`:
 
-1. **Build** - Uses the composite action
-2. **Calculate version** - Determine dev version from state
-3. **Pack** - Create NuGet package with version
-4. **Upload artifact** - Store package
-5. **Push to GitHub Packages** - Publish dev package
-6. **Update dev draft release** - Store new version state
+1. **Calculate version** - Determine dev version and RC version from state
+2. **Build** - Uses the composite action with dev version
+3. **Test** - Run unit tests
+4. **Pack dev package** - Create dev NuGet package
+5. **Build RC package** - Rebuild with RC version for correct assembly metadata
+6. **Pack RC package** - Create RC NuGet package
+7. **Upload artifacts** - Store both dev (`package`) and RC (`package-rc`) packages
+8. **Push to GitHub Packages** - Publish dev package only
+9. **Update dev draft release** - Store version state and CI run ID
+
+The RC version is determined by the current stage:
+- **pre stage**: RC version is `{base}-pre.{pre}.rel` (e.g., `0.0.1-pre.1.rel`)
+- **rtm stage**: RC version is `{base}` (e.g., `0.0.1`)
 
 If a release is pending (indicated by `pending_release` in state), the CI workflow skips publishing to avoid version conflicts.
 
@@ -46,24 +53,26 @@ Triggered manually via workflow dispatch:
 
 **Inputs:**
 - `release_type`: `prerelease`, `rtm`, or `stable` (required)
-- `version_bump`: `none`, `patch`, `minor`, or `major` (optional)
+- `version_bump`: `none`, `patch`, `minor`, or `major` (optional, but requires a new CI run after bumping)
 
 **Jobs:**
 
-1. **Build job**:
-   - Uses the composite action
-   - Calculates release version
-   - Packs with version
+1. **Prepare job**:
+   - Calculates expected release version from state
+   - Finds the CI run ID (from dev release state or latest successful CI run)
    - Updates dev release with pending state
 
 2. **Publish job** (for prerelease/stable):
-   - Downloads package artifact
+   - Downloads `package-rc` artifact from the CI run
+   - Verifies package version matches expected release version
    - Pushes to NuGet.org via trusted publishing
    - Creates GitHub release
    - Confirms version state after success
 
 3. **Confirm-RTM job** (for rtm):
    - Confirms RTM state (no NuGet publish needed)
+
+**Important:** The Release workflow does not build - it downloads the RC package from the CI workflow. This ensures releases use the exact binaries that were tested.
 
 ### PR Workflow (`pr.yml`)
 
@@ -88,10 +97,12 @@ The project uses a custom versioning scheme that tracks state in a GitHub draft 
 
 ### Version State
 
-Version state is stored in the body of a draft GitHub release named `dev`. The state is stored as an HTML comment:
+Version state is stored in the body of a draft GitHub release named `dev`. The state is stored as HTML comments:
 
 ```
 <!-- VERSION_STATE: {base_version}|{stage}|{pre_number}|{dev_number}|{pending_release} -->
+<!-- RC_VERSION: {rc_version} -->
+<!-- CI_RUN_ID: {run_id} -->
 ```
 
 Example: `<!-- VERSION_STATE: 0.0.1|pre|2|5|none -->`
@@ -102,6 +113,8 @@ Fields:
 - **pre_number**: Current pre-release number
 - **dev_number**: Current dev build number within the pre-release
 - **pending_release**: `none`, `prerelease`, or `stable` (used for release retry handling)
+- **rc_version**: The RC version built by CI (used for display)
+- **ci_run_id**: The GitHub Actions run ID (used by release workflow to download artifacts)
 
 ## Build Types
 
@@ -111,9 +124,9 @@ Triggered automatically on every push to `main`.
 
 **What happens:**
 1. Version is calculated from current state (incrementing `dev_number`)
-2. Package is built and packed
-3. Package is pushed to GitHub Packages
-4. Dev draft release is updated with new state
+2. Dev package is built and pushed to GitHub Packages
+3. RC package is built (with release version) and stored as artifact
+4. Dev draft release is updated with new state and CI run ID
 
 **Version example progression:**
 - `0.0.1-pre.1.dev.1` → `0.0.1-pre.1.dev.2` → `0.0.1-pre.1.dev.3`
@@ -130,10 +143,11 @@ dotnet tool install --global dotnet-dev-certs-plus \
 Triggered via **Release** workflow dispatch with `release_type: prerelease`.
 
 **What happens:**
-1. Version is set to `{base}-pre.{pre}.rel`
-2. Package is built and pushed to NuGet.org
-3. GitHub release is created (marked as pre-release)
-4. State is updated: `pre_number` increments, `dev_number` resets to 1
+1. Release workflow downloads RC package from latest CI run
+2. Version is verified to match `{base}-pre.{pre}.rel`
+3. Package is pushed to NuGet.org
+4. GitHub release is created (marked as pre-release)
+5. State is updated: `pre_number` increments, `dev_number` resets to 0
 
 **Version example:**
 - Before: `0.0.1-pre.1.dev.5`
@@ -159,10 +173,11 @@ This is useful when you're feature-complete and only doing bug fixes before stab
 Triggered via **Release** workflow dispatch with `release_type: stable`.
 
 **What happens:**
-1. Version is set to `{base}` (no suffix)
-2. Package is built and pushed to NuGet.org
-3. GitHub release is created (not marked as pre-release)
-4. State is updated: base version increments, resets to `pre.1.dev.1`
+1. Release workflow downloads RC package from latest CI run
+2. Version is verified to match `{base}` (no suffix)
+3. Package is pushed to NuGet.org
+4. GitHub release is created (not marked as pre-release)
+5. State is updated: base version increments, resets to `pre.1.dev.0`
 
 **Version example:**
 - Before: `0.0.1-rtm.dev.3`
@@ -171,7 +186,12 @@ Triggered via **Release** workflow dispatch with `release_type: stable`.
 
 ## Version Bumps
 
-You can bump the major, minor, or patch version using the `version_bump` input in the **Release** workflow.
+Version bumps work differently with the new release workflow:
+
+1. Version bumps are no longer applied during release
+2. To bump versions, update the version state manually in the dev draft release
+3. Push a commit to main to trigger a CI build with the new version
+4. Then trigger the release workflow
 
 | Bump Type | Before | After |
 |-----------|--------|-------|
@@ -179,7 +199,7 @@ You can bump the major, minor, or patch version using the `version_bump` input i
 | `minor` | `0.0.1` | `0.1.0` |
 | `major` | `0.1.0` | `1.0.0` |
 
-After a version bump, the state resets to `pre.1.dev.1`.
+After a version bump, the state resets to `pre.1.dev.0`.
 
 ## Trusted Publishing
 
@@ -276,3 +296,25 @@ You can manually edit the dev draft release body to correct the `VERSION_STATE` 
 If the dev draft release is missing, the workflows will:
 1. Look for the latest stable release to determine base version
 2. If no stable release exists, start from `0.0.1-pre.1.dev.1`
+
+### Package version mismatch during release
+
+If the release workflow fails with a version mismatch error, it means the RC package from CI doesn't match the expected release version. This can happen if:
+- The version state was manually modified after the last CI run
+- The wrong CI run was selected
+
+**Solution:** Push a new commit to main to trigger a fresh CI build, then retry the release.
+
+### No RC artifact found
+
+If the release workflow can't find the `package-rc` artifact, ensure:
+1. The CI workflow completed successfully
+2. The CI run is recent (artifacts expire after 90 days)
+3. The CI run wasn't skipped due to a pending release
+
+### Version bump requested during release
+
+Version bumps now require a new CI build. If you try to use `version_bump` in the release workflow, it will fail with an error. To bump versions:
+1. Manually update the version state in the dev draft release
+2. Push a commit to main to trigger CI
+3. Run the release workflow with `version_bump: none`

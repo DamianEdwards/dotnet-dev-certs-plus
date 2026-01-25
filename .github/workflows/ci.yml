@@ -92,14 +92,24 @@ jobs:
 
           echo "Dev build: $VERSION"
 
+          # Calculate RC version based on stage
+          if [ "$STAGE" = "rtm" ]; then
+            RC_VERSION="${BASE_VERSION}"
+          else
+            RC_VERSION="${BASE_VERSION}-pre.${PRE_NUMBER}.rel"
+          fi
+          echo "RC version: $RC_VERSION"
+
           # Output version info
           echo "version=${VERSION}" >> $GITHUB_OUTPUT
+          echo "rc_version=${RC_VERSION}" >> $GITHUB_OUTPUT
           echo "next_state=${BASE_VERSION}|${STAGE}|${PRE_NUMBER}|${DEV_NUMBER}|none" >> $GITHUB_OUTPUT
           echo "skip=false" >> $GITHUB_OUTPUT
 
           # Summary
           echo "## Version Information" >> $GITHUB_STEP_SUMMARY
-          echo "- **Version:** ${VERSION}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Dev Version:** ${VERSION}" >> $GITHUB_STEP_SUMMARY
+          echo "- **RC Version:** ${RC_VERSION}" >> $GITHUB_STEP_SUMMARY
           echo "- **Base Version:** ${BASE_VERSION}" >> $GITHUB_STEP_SUMMARY
 
       - name: Build
@@ -130,7 +140,7 @@ jobs:
           path: ./test-results/*.trx
           reporter: dotnet-trx
 
-      - name: Pack
+      - name: Pack dev package
         if: steps.version.outputs.skip != 'true'
         run: |
           dotnet pack src/dotnet-dev-certs-plus/dotnet-dev-certs-plus.csproj \
@@ -139,12 +149,36 @@ jobs:
             --output ./artifacts \
             -p:PackageVersion=${{ steps.version.outputs.version }}
 
+      - name: Build RC package
+        if: steps.version.outputs.skip != 'true'
+        run: |
+          dotnet build src/dotnet-dev-certs-plus/dotnet-dev-certs-plus.csproj \
+            --configuration Release \
+            -p:Version=${{ steps.version.outputs.rc_version }}
+
+      - name: Pack RC package
+        if: steps.version.outputs.skip != 'true'
+        run: |
+          dotnet pack src/dotnet-dev-certs-plus/dotnet-dev-certs-plus.csproj \
+            --configuration Release \
+            --no-build \
+            --output ./artifacts-rc \
+            -p:PackageVersion=${{ steps.version.outputs.rc_version }}
+
       - name: Upload package artifact
         if: steps.version.outputs.skip != 'true'
         uses: actions/upload-artifact@v4
         with:
           name: package
           path: ./artifacts/*.nupkg
+          retention-days: 90
+
+      - name: Upload RC package artifact
+        if: steps.version.outputs.skip != 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: package-rc
+          path: ./artifacts-rc/*.nupkg
           retention-days: 90
 
       - name: Push to GitHub Packages
@@ -161,6 +195,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           VERSION="${{ steps.version.outputs.version }}"
+          RC_VERSION="${{ steps.version.outputs.rc_version }}"
           NEXT_STATE="${{ steps.version.outputs.next_state }}"
 
           # Delete existing dev release if exists
@@ -175,7 +210,8 @@ jobs:
             --title "Development Build" \
             --notes "## Development Build
 
-          **Version:** ${VERSION}
+          **Dev Version:** ${VERSION}
+          **RC Version:** ${RC_VERSION}
           **Commit:** ${{ github.sha }}
           **Build:** [#${{ github.run_number }}](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
 
@@ -188,5 +224,7 @@ jobs:
           \`\`\`
 
           <!-- VERSION_STATE: ${NEXT_STATE} -->
+          <!-- RC_VERSION: ${RC_VERSION} -->
+          <!-- CI_RUN_ID: ${{ github.run_id }} -->
           " \
             ./artifacts/*.nupkg
