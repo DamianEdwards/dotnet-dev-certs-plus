@@ -166,7 +166,9 @@ public class UpdateChecker : IUpdateChecker
     /// <inheritdoc/>
     public string? GetCachedAvailableUpdate()
     {
-        return _stateManager.GetAvailableUpdate();
+        var update = _stateManager.GetAvailableUpdate();
+        _logger.LogDebug("Cached available update: {Version}", update ?? "(none)");
+        return update;
     }
 
     /// <inheritdoc/>
@@ -174,10 +176,13 @@ public class UpdateChecker : IUpdateChecker
     {
         if (IsUpdateCheckDisabled())
         {
+            _logger.LogDebug("Update check is disabled via environment variable");
             return false;
         }
 
-        return _stateManager.ShouldCheckForUpdate(CheckInterval);
+        var shouldCheck = _stateManager.ShouldCheckForUpdate(CheckInterval);
+        _logger.LogDebug("Should start background check: {ShouldCheck} (interval: {Interval})", shouldCheck, CheckInterval);
+        return shouldCheck;
     }
 
     /// <inheritdoc/>
@@ -188,8 +193,11 @@ public class UpdateChecker : IUpdateChecker
             var processPath = Environment.ProcessPath;
             if (string.IsNullOrEmpty(processPath))
             {
+                _logger.LogDebug("Cannot start background update check - process path is empty");
                 return;
             }
+
+            _logger.LogDebug("Starting background update check process: {ProcessPath} https --check-update", processPath);
 
             var startInfo = new ProcessStartInfo
             {
@@ -201,11 +209,19 @@ public class UpdateChecker : IUpdateChecker
             };
 
             var process = Process.Start(startInfo);
-            process?.Dispose(); // Dispose handle immediately - process continues running
+            if (process is not null)
+            {
+                _logger.LogDebug("Background update check started with PID {ProcessId}", process.Id);
+                process.Dispose(); // Dispose handle immediately - process continues running
+            }
+            else
+            {
+                _logger.LogDebug("Background update check process failed to start");
+            }
         }
-        catch
+        catch (Exception ex)
         {
-            // Ignore errors starting background process
+            _logger.LogDebug(ex, "Failed to start background update check process");
         }
     }
 
