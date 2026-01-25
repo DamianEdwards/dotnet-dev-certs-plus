@@ -1,4 +1,3 @@
-using System.Reflection;
 using NuGet.Versioning;
 
 namespace DotnetDevCertsPlus.Services;
@@ -25,39 +24,10 @@ public enum BuildType
 }
 
 /// <summary>
-/// Utilities for working with version information.
+/// Static utility methods for working with version strings.
 /// </summary>
 public static partial class VersionInfo
 {
-    private static string? _cachedVersion;
-
-    /// <summary>
-    /// Gets the current assembly's informational version.
-    /// </summary>
-    public static string GetCurrentVersion()
-    {
-        if (_cachedVersion is not null)
-        {
-            return _cachedVersion;
-        }
-
-        var version = Assembly.GetExecutingAssembly()
-            .GetCustomAttribute<AssemblyInformationalVersionAttribute>()?
-            .InformationalVersion;
-
-        // Strip off any +commit hash suffix
-        if (version is not null)
-        {
-            var plusIndex = version.IndexOf('+');
-            if (plusIndex > 0)
-            {
-                version = version[..plusIndex];
-            }
-        }
-
-        _cachedVersion = version ?? "0.0.0";
-        return _cachedVersion;
-    }
 
     /// <summary>
     /// Determines the build type based on the version string.
@@ -153,13 +123,5 @@ public static partial class VersionInfo
 
         // For stable builds, only show newer stable
         return newBuildType == BuildType.Stable;
-    }
-
-    /// <summary>
-    /// For testing: allows setting a mock version.
-    /// </summary>
-    internal static void SetVersionForTesting(string? version)
-    {
-        _cachedVersion = version;
     }
 }

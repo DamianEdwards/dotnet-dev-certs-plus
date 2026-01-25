@@ -58,32 +58,34 @@ public class UpdateChecker : IUpdateChecker
     private readonly IUpdateStateManager _stateManager;
     private readonly INuGetClient _nugetClient;
     private readonly IGitHubPackagesClient _githubClient;
+    private readonly IVersionInfoProvider _versionProvider;
     private readonly ILogger<UpdateChecker> _logger;
 
     /// <summary>
     /// Creates a new UpdateChecker with default dependencies.
     /// </summary>
     public UpdateChecker(ILoggerFactory loggerFactory) 
-        : this(new UpdateStateManager(), new NuGetClient(loggerFactory), new GitHubPackagesClient(), loggerFactory.CreateLogger<UpdateChecker>())
+        : this(new UpdateStateManager(), new NuGetClient(loggerFactory), new GitHubPackagesClient(), new VersionInfoProvider(), loggerFactory.CreateLogger<UpdateChecker>())
     {
     }
 
     /// <summary>
     /// Creates a new UpdateChecker with custom dependencies (for testing).
     /// </summary>
-    public UpdateChecker(IUpdateStateManager stateManager, INuGetClient nugetClient, IGitHubPackagesClient githubClient, ILogger<UpdateChecker>? logger = null)
+    public UpdateChecker(IUpdateStateManager stateManager, INuGetClient nugetClient, IGitHubPackagesClient githubClient, IVersionInfoProvider versionProvider, ILogger<UpdateChecker>? logger = null)
     {
         _stateManager = stateManager;
         _nugetClient = nugetClient;
         _githubClient = githubClient;
+        _versionProvider = versionProvider;
         _logger = logger ?? NullLogger<UpdateChecker>.Instance;
     }
 
     /// <inheritdoc/>
     public async Task<UpdateCheckResult> CheckForUpdateAsync(CancellationToken cancellationToken = default)
     {
-        var currentVersion = VersionInfo.GetCurrentVersion();
-        var currentBuildType = VersionInfo.GetBuildType(currentVersion);
+        var currentVersion = _versionProvider.GetCurrentVersion();
+        var currentBuildType = _versionProvider.GetCurrentBuildType();
 
         _logger.LogDebug("Update check started - Current version: {CurrentVersion}, Build type: {BuildType}", currentVersion, currentBuildType);
 

@@ -5,28 +5,32 @@ using Xunit;
 
 namespace DotnetDevCertsPlus.Tests.Unit.Services;
 
-public class UpdateCheckerTests : IDisposable
+public class UpdateCheckerTests
 {
     private readonly IUpdateStateManager _mockStateManager;
     private readonly INuGetClient _mockNuGetClient;
     private readonly IGitHubPackagesClient _mockGitHubClient;
-    private readonly UpdateChecker _checker;
+    private readonly IVersionInfoProvider _mockVersionProvider;
 
     public UpdateCheckerTests()
     {
         _mockStateManager = Substitute.For<IUpdateStateManager>();
         _mockNuGetClient = Substitute.For<INuGetClient>();
         _mockGitHubClient = Substitute.For<IGitHubPackagesClient>();
-        _checker = new UpdateChecker(_mockStateManager, _mockNuGetClient, _mockGitHubClient, NullLogger<UpdateChecker>.Instance);
-
-        // Reset version for each test
-        VersionInfo.SetVersionForTesting(null);
+        _mockVersionProvider = Substitute.For<IVersionInfoProvider>();
     }
 
-    public void Dispose()
+    private UpdateChecker CreateChecker() => new UpdateChecker(
+        _mockStateManager, 
+        _mockNuGetClient, 
+        _mockGitHubClient, 
+        _mockVersionProvider, 
+        NullLogger<UpdateChecker>.Instance);
+
+    private void SetupVersion(string version)
     {
-        VersionInfo.SetVersionForTesting(null);
-        GC.SuppressFinalize(this);
+        _mockVersionProvider.GetCurrentVersion().Returns(version);
+        _mockVersionProvider.GetCurrentBuildType().Returns(VersionInfo.GetBuildType(version));
     }
 
     #region CheckForUpdateAsync Tests
@@ -35,12 +39,13 @@ public class UpdateCheckerTests : IDisposable
     public async Task CheckForUpdateAsync_UpdatesLastCheckTime()
     {
         // Arrange
-        VersionInfo.SetVersionForTesting("1.0.0");
+        SetupVersion("1.0.0");
         _mockNuGetClient.GetPackageVersionsAsync(Arg.Any<string>(), Arg.Any<CancellationToken>())
             .Returns(new List<string>());
+        var checker = CreateChecker();
 
         // Act
-        await _checker.CheckForUpdateAsync(TestContext.Current.CancellationToken);
+        await checker.CheckForUpdateAsync(TestContext.Current.CancellationToken);
 
         // Assert
         _mockStateManager.Received(1).UpdateLastCheckTime();
@@ -50,12 +55,13 @@ public class UpdateCheckerTests : IDisposable
     public async Task CheckForUpdateAsync_StableBuild_OnlyChecksNuGet()
     {
         // Arrange
-        VersionInfo.SetVersionForTesting("1.0.0");
+        SetupVersion("1.0.0");
         _mockNuGetClient.GetPackageVersionsAsync(Arg.Any<string>(), Arg.Any<CancellationToken>())
             .Returns(new List<string> { "1.0.1" });
+        var checker = CreateChecker();
 
         // Act
-        var result = await _checker.CheckForUpdateAsync(TestContext.Current.CancellationToken);
+        var result = await checker.CheckForUpdateAsync(TestContext.Current.CancellationToken);
 
         // Assert
         await _mockNuGetClient.Received(1).GetPackageVersionsAsync(Arg.Any<string>(), Arg.Any<CancellationToken>());
@@ -68,14 +74,15 @@ public class UpdateCheckerTests : IDisposable
     public async Task CheckForUpdateAsync_DevBuild_ChecksBothSources()
     {
         // Arrange
-        VersionInfo.SetVersionForTesting("1.0.0-pre.1.dev.1");
+        SetupVersion("1.0.0-pre.1.dev.1");
         _mockNuGetClient.GetPackageVersionsAsync(Arg.Any<string>(), Arg.Any<CancellationToken>())
             .Returns(new List<string> { "1.0.0" });
         _mockGitHubClient.GetPackageVersionsAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>())
             .Returns(new List<string> { "1.0.0-pre.1.dev.2" });
+        var checker = CreateChecker();
 
         // Act
-        var result = await _checker.CheckForUpdateAsync(TestContext.Current.CancellationToken);
+        var result = await checker.CheckForUpdateAsync(TestContext.Current.CancellationToken);
 
         // Assert
         await _mockNuGetClient.Received(1).GetPackageVersionsAsync(Arg.Any<string>(), Arg.Any<CancellationToken>());
@@ -87,12 +94,13 @@ public class UpdateCheckerTests : IDisposable
     public async Task CheckForUpdateAsync_FindsNewerVersion_SetsAvailableUpdate()
     {
         // Arrange
-        VersionInfo.SetVersionForTesting("1.0.0");
+        SetupVersion("1.0.0");
         _mockNuGetClient.GetPackageVersionsAsync(Arg.Any<string>(), Arg.Any<CancellationToken>())
             .Returns(new List<string> { "1.0.0", "1.1.0", "2.0.0" });
+        var checker = CreateChecker();
 
         // Act
-        var result = await _checker.CheckForUpdateAsync(TestContext.Current.CancellationToken);
+        var result = await checker.CheckForUpdateAsync(TestContext.Current.CancellationToken);
 
         // Assert
         _mockStateManager.Received(1).SetAvailableUpdate("2.0.0");
@@ -103,12 +111,13 @@ public class UpdateCheckerTests : IDisposable
     public async Task CheckForUpdateAsync_NoNewerVersion_ClearsAvailableUpdate()
     {
         // Arrange
-        VersionInfo.SetVersionForTesting("2.0.0");
+        SetupVersion("2.0.0");
         _mockNuGetClient.GetPackageVersionsAsync(Arg.Any<string>(), Arg.Any<CancellationToken>())
             .Returns(new List<string> { "1.0.0", "1.1.0", "2.0.0" });
+        var checker = CreateChecker();
 
         // Act
-        var result = await _checker.CheckForUpdateAsync(TestContext.Current.CancellationToken);
+        var result = await checker.CheckForUpdateAsync(TestContext.Current.CancellationToken);
 
         // Assert
         _mockStateManager.Received(1).ClearAvailableUpdate();
@@ -120,12 +129,13 @@ public class UpdateCheckerTests : IDisposable
     public async Task CheckForUpdateAsync_StableBuild_IgnoresPreReleaseVersions()
     {
         // Arrange
-        VersionInfo.SetVersionForTesting("1.0.0");
+        SetupVersion("1.0.0");
         _mockNuGetClient.GetPackageVersionsAsync(Arg.Any<string>(), Arg.Any<CancellationToken>())
             .Returns(new List<string> { "1.0.0", "1.1.0-pre.1", "2.0.0-alpha" });
+        var checker = CreateChecker();
 
         // Act
-        var result = await _checker.CheckForUpdateAsync(TestContext.Current.CancellationToken);
+        var result = await checker.CheckForUpdateAsync(TestContext.Current.CancellationToken);
 
         // Assert
         Assert.False(result.UpdateAvailable);
@@ -136,12 +146,13 @@ public class UpdateCheckerTests : IDisposable
     public async Task CheckForUpdateAsync_PreReleaseBuild_AcceptsStable()
     {
         // Arrange
-        VersionInfo.SetVersionForTesting("1.0.0-pre.1.rel");
+        SetupVersion("1.0.0-pre.1.rel");
         _mockNuGetClient.GetPackageVersionsAsync(Arg.Any<string>(), Arg.Any<CancellationToken>())
             .Returns(new List<string> { "1.0.0" });
+        var checker = CreateChecker();
 
         // Act
-        var result = await _checker.CheckForUpdateAsync(TestContext.Current.CancellationToken);
+        var result = await checker.CheckForUpdateAsync(TestContext.Current.CancellationToken);
 
         // Assert
         Assert.True(result.UpdateAvailable);
@@ -152,12 +163,13 @@ public class UpdateCheckerTests : IDisposable
     public async Task CheckForUpdateAsync_PreReleaseBuild_OnlyChecksNuGet()
     {
         // Arrange
-        VersionInfo.SetVersionForTesting("1.0.0-pre.1");
+        SetupVersion("1.0.0-pre.1");
         _mockNuGetClient.GetPackageVersionsAsync(Arg.Any<string>(), Arg.Any<CancellationToken>())
             .Returns(new List<string> { "1.0.0-pre.2" });
+        var checker = CreateChecker();
 
         // Act
-        var result = await _checker.CheckForUpdateAsync(TestContext.Current.CancellationToken);
+        var result = await checker.CheckForUpdateAsync(TestContext.Current.CancellationToken);
 
         // Assert
         await _mockNuGetClient.Received(1).GetPackageVersionsAsync(Arg.Any<string>(), Arg.Any<CancellationToken>());
@@ -170,12 +182,13 @@ public class UpdateCheckerTests : IDisposable
     public async Task CheckForUpdateAsync_PreReleaseBuild_AcceptsNewerPreRelease()
     {
         // Arrange
-        VersionInfo.SetVersionForTesting("1.0.0-pre.1");
+        SetupVersion("1.0.0-pre.1");
         _mockNuGetClient.GetPackageVersionsAsync(Arg.Any<string>(), Arg.Any<CancellationToken>())
             .Returns(new List<string> { "1.0.0-pre.2", "1.0.0-pre.3" });
+        var checker = CreateChecker();
 
         // Act
-        var result = await _checker.CheckForUpdateAsync(TestContext.Current.CancellationToken);
+        var result = await checker.CheckForUpdateAsync(TestContext.Current.CancellationToken);
 
         // Assert
         Assert.True(result.UpdateAvailable);
@@ -187,14 +200,15 @@ public class UpdateCheckerTests : IDisposable
     public async Task CheckForUpdateAsync_DevBuild_AcceptsStableFromNuGet()
     {
         // Arrange
-        VersionInfo.SetVersionForTesting("1.0.0-pre.1.dev.1");
+        SetupVersion("1.0.0-pre.1.dev.1");
         _mockNuGetClient.GetPackageVersionsAsync(Arg.Any<string>(), Arg.Any<CancellationToken>())
             .Returns(new List<string> { "1.0.0" });
         _mockGitHubClient.GetPackageVersionsAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>())
             .Returns(new List<string>());
+        var checker = CreateChecker();
 
         // Act
-        var result = await _checker.CheckForUpdateAsync(TestContext.Current.CancellationToken);
+        var result = await checker.CheckForUpdateAsync(TestContext.Current.CancellationToken);
 
         // Assert
         Assert.True(result.UpdateAvailable);
@@ -206,14 +220,15 @@ public class UpdateCheckerTests : IDisposable
     public async Task CheckForUpdateAsync_DevBuild_AcceptsPreReleaseFromNuGet()
     {
         // Arrange
-        VersionInfo.SetVersionForTesting("1.0.0-pre.1.dev.1");
+        SetupVersion("1.0.0-pre.1.dev.1");
         _mockNuGetClient.GetPackageVersionsAsync(Arg.Any<string>(), Arg.Any<CancellationToken>())
             .Returns(new List<string> { "1.0.0-pre.2" });
         _mockGitHubClient.GetPackageVersionsAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>())
             .Returns(new List<string>());
+        var checker = CreateChecker();
 
         // Act
-        var result = await _checker.CheckForUpdateAsync(TestContext.Current.CancellationToken);
+        var result = await checker.CheckForUpdateAsync(TestContext.Current.CancellationToken);
 
         // Assert
         Assert.True(result.UpdateAvailable);
@@ -225,14 +240,15 @@ public class UpdateCheckerTests : IDisposable
     public async Task CheckForUpdateAsync_DevBuild_AcceptsNewerDevFromGitHub()
     {
         // Arrange
-        VersionInfo.SetVersionForTesting("1.0.0-pre.1.dev.1");
+        SetupVersion("1.0.0-pre.1.dev.1");
         _mockNuGetClient.GetPackageVersionsAsync(Arg.Any<string>(), Arg.Any<CancellationToken>())
             .Returns(new List<string>());
         _mockGitHubClient.GetPackageVersionsAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>())
             .Returns(new List<string> { "1.0.0-pre.1.dev.2", "1.0.0-pre.1.dev.3" });
+        var checker = CreateChecker();
 
         // Act
-        var result = await _checker.CheckForUpdateAsync(TestContext.Current.CancellationToken);
+        var result = await checker.CheckForUpdateAsync(TestContext.Current.CancellationToken);
 
         // Assert
         Assert.True(result.UpdateAvailable);
@@ -249,9 +265,10 @@ public class UpdateCheckerTests : IDisposable
     {
         // Arrange
         _mockStateManager.GetAvailableUpdate().Returns("2.0.0");
+        var checker = CreateChecker();
 
         // Act
-        var result = _checker.GetCachedAvailableUpdate();
+        var result = checker.GetCachedAvailableUpdate();
 
         // Assert
         Assert.Equal("2.0.0", result);
@@ -262,9 +279,10 @@ public class UpdateCheckerTests : IDisposable
     {
         // Arrange
         _mockStateManager.GetAvailableUpdate().Returns((string?)null);
+        var checker = CreateChecker();
 
         // Act
-        var result = _checker.GetCachedAvailableUpdate();
+        var result = checker.GetCachedAvailableUpdate();
 
         // Assert
         Assert.Null(result);
@@ -279,9 +297,10 @@ public class UpdateCheckerTests : IDisposable
     {
         // Arrange
         _mockStateManager.ShouldCheckForUpdate(Arg.Any<TimeSpan>()).Returns(true);
+        var checker = CreateChecker();
 
         // Act
-        var result = _checker.ShouldStartBackgroundCheck();
+        var result = checker.ShouldStartBackgroundCheck();
 
         // Assert
         Assert.True(result);
@@ -292,9 +311,10 @@ public class UpdateCheckerTests : IDisposable
     {
         // Arrange
         _mockStateManager.ShouldCheckForUpdate(Arg.Any<TimeSpan>()).Returns(false);
+        var checker = CreateChecker();
 
         // Act
-        var result = _checker.ShouldStartBackgroundCheck();
+        var result = checker.ShouldStartBackgroundCheck();
 
         // Assert
         Assert.False(result);
@@ -306,10 +326,11 @@ public class UpdateCheckerTests : IDisposable
         // Arrange
         _mockStateManager.ShouldCheckForUpdate(Arg.Any<TimeSpan>()).Returns(true);
         Environment.SetEnvironmentVariable("DOTNET_DEV_CERTS_PLUS_DISABLE_UPDATE_CHECK", "1");
+        var checker = CreateChecker();
         try
         {
             // Act
-            var result = _checker.ShouldStartBackgroundCheck();
+            var result = checker.ShouldStartBackgroundCheck();
 
             // Assert
             Assert.False(result);
@@ -335,9 +356,10 @@ public class UpdateCheckerTests : IDisposable
     public void IsUpdateCheckDisabled_RespectsEnvVar(string envValue, bool expected)
     {
         Environment.SetEnvironmentVariable("DOTNET_DEV_CERTS_PLUS_DISABLE_UPDATE_CHECK", envValue);
+        var checker = CreateChecker();
         try
         {
-            var result = _checker.IsUpdateCheckDisabled();
+            var result = checker.IsUpdateCheckDisabled();
             Assert.Equal(expected, result);
         }
         finally
@@ -350,8 +372,9 @@ public class UpdateCheckerTests : IDisposable
     public void IsUpdateCheckDisabled_NoEnvVar_ReturnsFalse()
     {
         Environment.SetEnvironmentVariable("DOTNET_DEV_CERTS_PLUS_DISABLE_UPDATE_CHECK", null);
+        var checker = CreateChecker();
         
-        var result = _checker.IsUpdateCheckDisabled();
+        var result = checker.IsUpdateCheckDisabled();
         
         Assert.False(result);
     }

@@ -62,4 +62,9 @@ public class ServiceFactory
     /// Creates a new update checker instance.
     /// </summary>
     public virtual IUpdateChecker CreateUpdateChecker() => new UpdateChecker(GetLoggerFactory());
+
+    /// <summary>
+    /// Creates a new version info provider instance.
+    /// </summary>
+    public virtual IVersionInfoProvider CreateVersionInfoProvider() => new VersionInfoProvider();
 }
