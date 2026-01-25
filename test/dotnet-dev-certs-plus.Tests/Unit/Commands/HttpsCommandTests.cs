@@ -9,11 +9,12 @@ public class HttpsCommandTests
     #region GetUpdateCommand Tests
 
     [Fact]
-    public void GetUpdateCommand_DevBuild_IncludesGitHubPackagesSource()
+    public void GetUpdateCommand_DevBuild_IncludesGitHubPackagesSourceAndPrereleaseFlag()
     {
         var command = HttpsCommand.GetUpdateCommand(BuildType.Dev);
 
         Assert.Contains("--add-source https://nuget.pkg.github.com/DamianEdwards/index.json", command);
+        Assert.Contains("--prerelease", command);
         Assert.Contains("dotnet tool update -g dotnet-dev-certs-plus", command);
     }
 

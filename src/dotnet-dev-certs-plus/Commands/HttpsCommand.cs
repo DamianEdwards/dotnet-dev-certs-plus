@@ -370,7 +370,7 @@ public static class HttpsCommand
     private static void DisplayUpdateInstructions(OutputHelper output)
     {
         var command = GetUpdateCommand();
-        output.WriteError($"  Update with: {command}");
+        output.WriteError($"   Update with: {command}");
     }
 
     /// <summary>
@@ -390,7 +390,7 @@ public static class HttpsCommand
     {
         return buildType switch
         {
-            BuildType.Dev => "dotnet tool update -g dotnet-dev-certs-plus --add-source https://nuget.pkg.github.com/DamianEdwards/index.json",
+            BuildType.Dev => "dotnet tool update -g dotnet-dev-certs-plus --prerelease --add-source https://nuget.pkg.github.com/DamianEdwards/index.json",
             BuildType.PreRelease => "dotnet tool update -g dotnet-dev-certs-plus --prerelease",
             _ => "dotnet tool update -g dotnet-dev-certs-plus"
         };
