@@ -78,7 +78,8 @@ The release type (prerelease vs stable) is determined automatically from the cur
 Triggered manually to change version base or phase:
 
 **Inputs:**
-- `version_bump`: `none`, `auto`, `patch`, `minor`, or `major`
+- `version_bump`: `auto` (default), `patch`, `minor`, or `major`
+  - `auto`: Bumps version only if staying at same phase or moving backwards; no bump when advancing phase (pre→rc→rtm)
 - `phase`: `pre`, `rc`, or `rtm`
 
 **What it does:**

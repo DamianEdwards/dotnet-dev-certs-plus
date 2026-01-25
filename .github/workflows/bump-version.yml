@@ -4,11 +4,11 @@ on:
   workflow_dispatch:
     inputs:
       version_bump:
-        description: 'Version bump type'
+        description: 'Version bump type (auto uses appropriate bump based on phase transition)'
         required: true
+        default: 'auto'
         type: choice
         options:
-          - none
           - auto
           - patch
           - minor

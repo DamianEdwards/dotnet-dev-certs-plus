@@ -300,23 +300,36 @@ BumpResult BumpVersion(VersionState state, string versionBump, string targetPhas
     int minor = int.Parse(parts[1]);
     int patch = int.Parse(parts[2]);
 
+    // Validate target phase
+    if (targetPhase != "pre" && targetPhase != "rc" && targetPhase != "rtm")
+    {
+        return new BumpResult(false, $"Unknown phase: {targetPhase}. Must be 'pre', 'rc', or 'rtm'.", null);
+    }
+
+    var phaseOrder = new Dictionary<string, int> { { "pre", 0 }, { "rc", 1 }, { "rtm", 2 } };
+    var currentPhaseOrder = phaseOrder[state.Phase];
+    var targetPhaseOrder = phaseOrder[targetPhase];
+
     // Apply version bump
     switch (versionBump.ToLower())
     {
-        case "none":
-            // No change to version
-            break;
         case "auto":
-            // Auto bump based on current major
-            if (major == 0)
+            // Auto: bump only if staying at same phase or moving backwards
+            // If moving forward to higher phase (pre→rc, pre→rtm, rc→rtm), no bump needed
+            if (targetPhaseOrder <= currentPhaseOrder)
             {
-                patch++;
+                // Need to bump version since we're not advancing phase
+                if (major == 0)
+                {
+                    patch++;
+                }
+                else
+                {
+                    minor++;
+                    patch = 0;
+                }
             }
-            else
-            {
-                minor++;
-                patch = 0;
-            }
+            // If moving forward (targetPhaseOrder > currentPhaseOrder), no version bump
             break;
         case "patch":
             patch++;
@@ -334,37 +347,18 @@ BumpResult BumpVersion(VersionState state, string versionBump, string targetPhas
             return new BumpResult(false, $"Unknown version bump type: {versionBump}", null);
     }
 
-    // Validate target phase
-    if (targetPhase != "pre" && targetPhase != "rc" && targetPhase != "rtm")
-    {
-        return new BumpResult(false, $"Unknown phase: {targetPhase}. Must be 'pre', 'rc', or 'rtm'.", null);
-    }
-
     var newBaseVersion = $"{major}.{minor}.{patch}";
 
     // Determine phase number
     int newPhaseNumber = targetPhase == "rtm" ? 0 : 1;
 
-    // If same base version and same phase, this might be invalid
-    if (newBaseVersion == state.Base && versionBump == "none")
+    // Validate: ensure we're actually making a change
+    if (newBaseVersion == state.Base && targetPhase == state.Phase)
     {
-        // Check if phase transition is valid (can't go backwards)
-        var phaseOrder = new Dictionary<string, int> { { "pre", 0 }, { "rc", 1 }, { "rtm", 2 } };
-
-        if (phaseOrder[targetPhase] < phaseOrder[state.Phase])
-        {
-            return new BumpResult(false,
-                $"Cannot move from phase '{state.Phase}' to '{targetPhase}' without bumping version. " +
-                $"Phase transitions must move forward (pre → rc → rtm) or include a version bump.",
-                null);
-        }
-
-        if (targetPhase == state.Phase)
-        {
-            return new BumpResult(false,
-                $"No change requested. Current phase is already '{state.Phase}' and no version bump specified.",
-                null);
-        }
+        return new BumpResult(false,
+            $"No change would result. Current state is already '{state.Phase}' phase with base version {state.Base}. " +
+            $"Use an explicit version bump (patch/minor/major) or select a different phase.",
+            null);
     }
 
     // Calculate what the RC version would be
