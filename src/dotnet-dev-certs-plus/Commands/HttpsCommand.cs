@@ -354,26 +354,46 @@ public static class HttpsCommand
             return;
         }
 
-        Console.WriteLine();
-        Console.ForegroundColor = ConsoleColor.Yellow;
-        Console.WriteLine($"⚠ A new version of dotnet-dev-certs-plus is available: {availableVersion}");
-        Console.ResetColor();
+        Console.Error.WriteLine();
+        try
+        {
+            Console.ForegroundColor = ConsoleColor.Yellow;
+            Console.Error.WriteLine($"⚠  A new version of dotnet-dev-certs-plus is available: {availableVersion}");
+        }
+        finally
+        {
+            Console.ResetColor();
+        }
         DisplayUpdateInstructions(output);
     }
 
     private static void DisplayUpdateInstructions(OutputHelper output)
     {
+        var command = GetUpdateCommand();
+        output.WriteError($"  Update with: {command}");
+    }
+
+    /// <summary>
+    /// Gets the appropriate update command based on the current build type.
+    /// </summary>
+    internal static string GetUpdateCommand()
+    {
         var currentVersion = VersionInfo.GetCurrentVersion();
         var buildType = VersionInfo.GetBuildType(currentVersion);
+        return GetUpdateCommand(buildType);
+    }
 
-        if (buildType == BuildType.Dev)
+    /// <summary>
+    /// Gets the appropriate update command for the specified build type.
+    /// </summary>
+    internal static string GetUpdateCommand(BuildType buildType)
+    {
+        return buildType switch
         {
-            output.WriteLine("  Update with: dotnet tool update -g dotnet-dev-certs-plus --add-source https://nuget.pkg.github.com/DamianEdwards/index.json");
-        }
-        else
-        {
-            output.WriteLine("  Update with: dotnet tool update -g dotnet-dev-certs-plus");
-        }
+            BuildType.Dev => "dotnet tool update -g dotnet-dev-certs-plus --add-source https://nuget.pkg.github.com/DamianEdwards/index.json",
+            BuildType.PreRelease => "dotnet tool update -g dotnet-dev-certs-plus --prerelease",
+            _ => "dotnet tool update -g dotnet-dev-certs-plus"
+        };
     }
 
     private static async Task<int> HandlePassthroughAsync(
