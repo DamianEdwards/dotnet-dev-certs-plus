@@ -1,8 +1,9 @@
-#!/usr/bin/env dotnet run
+#!/usr/bin/env dotnet
 #:package NuGet.Versioning@6.13.1
+#:package System.CommandLine@2.0.2
 #:property PublishAot=false
-#:property JsonSerializerIsReflectionEnabledByDefault=true
 
+using System.CommandLine;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
@@ -15,46 +16,26 @@ var jsonOptions = new JsonSerializerOptions
     WriteIndented = true
 };
 
-// Parse command and arguments
-if (args.Length == 0)
-{
-    PrintHelp();
-    return 0;
-}
+// Root command
+var rootCommand = new RootCommand("Version management tool for dotnet-dev-certs-plus");
 
-var command = args[0].ToLower();
-var cmdArgs = ParseArgs(args.Skip(1).ToArray());
-
-try
+// === STATE COMMAND ===
+var stateCommand = new Command("state", "Read version state from dev draft release");
+var bodyOption = new Option<string?>("--body") { Description = "Release body content to parse" };
+var releasesJsonOption = new Option<string?>("--releases-json") { Description = "JSON array of releases for initialization" };
+stateCommand.Options.Add(bodyOption);
+stateCommand.Options.Add(releasesJsonOption);
+stateCommand.SetAction(parseResult =>
 {
-    return command switch
-    {
-        "state" => HandleState(cmdArgs),
-        "calculate" => HandleCalculate(cmdArgs),
-        "advance" => HandleAdvance(cmdArgs),
-        "bump" => HandleBump(cmdArgs),
-        "validate" => HandleValidate(cmdArgs),
-        "--help" or "-h" or "help" => PrintHelp(),
-        _ => Error($"Unknown command: {command}")
-    };
-}
-catch (Exception ex)
-{
-    Console.Error.WriteLine($"Error: {ex.Message}");
-    return 1;
-}
-
-// === COMMAND HANDLERS ===
-
-int HandleState(Dictionary<string, string?> args)
-{
+    var body = parseResult.GetValue(bodyOption);
+    var releasesJson = parseResult.GetValue(releasesJsonOption);
     VersionState state;
 
-    if (args.TryGetValue("--body", out var body) && !string.IsNullOrEmpty(body))
+    if (!string.IsNullOrEmpty(body))
     {
         state = ParseStateFromBody(body);
     }
-    else if (args.TryGetValue("--releases-json", out var releasesJson) && !string.IsNullOrEmpty(releasesJson))
+    else if (!string.IsNullOrEmpty(releasesJson))
     {
         state = InitializeFromReleases(releasesJson);
     }
@@ -64,60 +45,58 @@ int HandleState(Dictionary<string, string?> args)
     }
 
     Console.WriteLine(JsonSerializer.Serialize(state, jsonOptions));
-    return 0;
-}
+});
+rootCommand.Subcommands.Add(stateCommand);
 
-int HandleCalculate(Dictionary<string, string?> args)
+// === CALCULATE COMMAND ===
+var calculateCommand = new Command("calculate", "Calculate dev and RC versions from state");
+var stateOption = new Option<string>("--state") { Description = "Version state as JSON", Required = true };
+calculateCommand.Options.Add(stateOption);
+calculateCommand.SetAction(parseResult =>
 {
-    if (!args.TryGetValue("--state", out var stateJson) || string.IsNullOrEmpty(stateJson))
-    {
-        return Error("--state is required");
-    }
-
+    var stateJson = parseResult.GetValue(stateOption)!;
     var state = JsonSerializer.Deserialize<VersionState>(stateJson, jsonOptions)
         ?? throw new ArgumentException("Invalid state JSON");
 
     var versions = CalculateVersions(state);
     Console.WriteLine(JsonSerializer.Serialize(versions, jsonOptions));
-    return 0;
-}
+});
+rootCommand.Subcommands.Add(calculateCommand);
 
-int HandleAdvance(Dictionary<string, string?> args)
+// === ADVANCE COMMAND ===
+var advanceCommand = new Command("advance", "Calculate next state after a release is shipped");
+var advanceStateOption = new Option<string>("--state") { Description = "Current version state as JSON", Required = true };
+var shippedVersionOption = new Option<string>("--shipped-version") { Description = "The version that was just shipped", Required = true };
+advanceCommand.Options.Add(advanceStateOption);
+advanceCommand.Options.Add(shippedVersionOption);
+advanceCommand.SetAction(parseResult =>
 {
-    if (!args.TryGetValue("--state", out var stateJson) || string.IsNullOrEmpty(stateJson))
-    {
-        return Error("--state is required");
-    }
-    if (!args.TryGetValue("--shipped-version", out var shippedVersion) || string.IsNullOrEmpty(shippedVersion))
-    {
-        return Error("--shipped-version is required");
-    }
-
+    var stateJson = parseResult.GetValue(advanceStateOption)!;
+    var shippedVersion = parseResult.GetValue(shippedVersionOption)!;
     var state = JsonSerializer.Deserialize<VersionState>(stateJson, jsonOptions)
         ?? throw new ArgumentException("Invalid state JSON");
 
     var newState = AdvanceState(state, shippedVersion);
     Console.WriteLine(JsonSerializer.Serialize(newState, jsonOptions));
-    return 0;
-}
+});
+rootCommand.Subcommands.Add(advanceCommand);
 
-int HandleBump(Dictionary<string, string?> args)
+// === BUMP COMMAND ===
+var bumpCommand = new Command("bump", "Apply version bump and/or phase change");
+var bumpStateOption = new Option<string>("--state") { Description = "Current version state as JSON", Required = true };
+var versionBumpOption = new Option<string>("--version-bump") { Description = "Version bump type: none, auto, patch, minor, major", Required = true };
+var phaseOption = new Option<string>("--phase") { Description = "Target phase: pre, rc, rtm", Required = true };
+var bumpReleasesJsonOption = new Option<string?>("--releases-json") { Description = "JSON array of releases for validation" };
+bumpCommand.Options.Add(bumpStateOption);
+bumpCommand.Options.Add(versionBumpOption);
+bumpCommand.Options.Add(phaseOption);
+bumpCommand.Options.Add(bumpReleasesJsonOption);
+bumpCommand.SetAction(parseResult =>
 {
-    if (!args.TryGetValue("--state", out var stateJson) || string.IsNullOrEmpty(stateJson))
-    {
-        return Error("--state is required");
-    }
-    if (!args.TryGetValue("--version-bump", out var versionBump) || string.IsNullOrEmpty(versionBump))
-    {
-        return Error("--version-bump is required");
-    }
-    if (!args.TryGetValue("--phase", out var phase) || string.IsNullOrEmpty(phase))
-    {
-        return Error("--phase is required");
-    }
-
-    args.TryGetValue("--releases-json", out var releasesJson);
-
+    var stateJson = parseResult.GetValue(bumpStateOption)!;
+    var versionBump = parseResult.GetValue(versionBumpOption)!;
+    var phase = parseResult.GetValue(phaseOption)!;
+    var releasesJson = parseResult.GetValue(bumpReleasesJsonOption);
     var state = JsonSerializer.Deserialize<VersionState>(stateJson, jsonOptions)
         ?? throw new ArgumentException("Invalid state JSON");
 
@@ -126,90 +105,35 @@ int HandleBump(Dictionary<string, string?> args)
     if (!result.Valid)
     {
         Console.Error.WriteLine($"Error: {result.Reason}");
-        return 1;
+        Environment.Exit(1);
     }
 
     Console.WriteLine(JsonSerializer.Serialize(result.NewState, jsonOptions));
-    return 0;
-}
+});
+rootCommand.Subcommands.Add(bumpCommand);
 
-int HandleValidate(Dictionary<string, string?> args)
+// === VALIDATE COMMAND ===
+var validateCommand = new Command("validate", "Check if a version would be valid");
+var versionOption = new Option<string>("--version") { Description = "Version to validate", Required = true };
+var validateReleasesJsonOption = new Option<string?>("--releases-json") { Description = "JSON array of shipped releases" };
+validateCommand.Options.Add(versionOption);
+validateCommand.Options.Add(validateReleasesJsonOption);
+validateCommand.SetAction(parseResult =>
 {
-    if (!args.TryGetValue("--version", out var version) || string.IsNullOrEmpty(version))
-    {
-        return Error("--version is required");
-    }
-
-    args.TryGetValue("--releases-json", out var releasesJson);
-
+    var version = parseResult.GetValue(versionOption)!;
+    var releasesJson = parseResult.GetValue(validateReleasesJsonOption);
     var result = ValidateVersion(version, releasesJson);
     Console.WriteLine(JsonSerializer.Serialize(result, jsonOptions));
 
-    return result.Valid ? 0 : 1;
-}
-
-int PrintHelp()
-{
-    Console.WriteLine("""
-        Version management tool for dotnet-dev-certs-plus
-
-        Usage: dotnet scripts/version.cs -- <command> [options]
-
-        Commands:
-          state       Read version state from dev draft release
-          calculate   Calculate dev and RC versions from state
-          advance     Calculate next state after a release is shipped
-          bump        Apply version bump and/or phase change
-          validate    Check if a version would be valid
-
-        Options for 'state':
-          --body <text>           Release body content to parse
-          --releases-json <json>  JSON array of releases for initialization
-
-        Options for 'calculate':
-          --state <json>          Version state as JSON (required)
-
-        Options for 'advance':
-          --state <json>          Current version state as JSON (required)
-          --shipped-version <v>   The version that was just shipped (required)
-
-        Options for 'bump':
-          --state <json>          Current version state as JSON (required)
-          --version-bump <type>   none, auto, patch, minor, major (required)
-          --phase <phase>         pre, rc, rtm (required)
-          --releases-json <json>  JSON array of releases for validation
-
-        Options for 'validate':
-          --version <version>     Version to validate (required)
-          --releases-json <json>  JSON array of shipped releases
-        """);
-    return 0;
-}
-
-int Error(string message)
-{
-    Console.Error.WriteLine($"Error: {message}");
-    return 1;
-}
-
-Dictionary<string, string?> ParseArgs(string[] args)
-{
-    var result = new Dictionary<string, string?>();
-    for (int i = 0; i < args.Length; i++)
+    if (!result.Valid)
     {
-        if (args[i].StartsWith("--"))
-        {
-            var key = args[i];
-            string? value = null;
-            if (i + 1 < args.Length && !args[i + 1].StartsWith("--"))
-            {
-                value = args[++i];
-            }
-            result[key] = value;
-        }
+        Environment.Exit(1);
     }
-    return result;
-}
+});
+rootCommand.Subcommands.Add(validateCommand);
+
+// Run the command
+return rootCommand.Parse(args).Invoke();
 
 // === LOCAL FUNCTIONS ===
 
