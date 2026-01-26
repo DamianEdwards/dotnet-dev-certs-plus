@@ -4,66 +4,93 @@ This document describes the CI/CD pipeline for dotnet-dev-certs-plus, including 
 
 ## Overview
 
-The project uses three GitHub Actions workflows:
+The project uses four GitHub Actions workflows:
 
 | Workflow | File | Trigger | Purpose |
 |----------|------|---------|---------|
-| **CI** | `ci.yml` | Push to `main` | Dev builds → GitHub Packages |
-| **Release** | `release.yml` | Manual dispatch | Releases → NuGet.org |
+| **CI** | `ci.yml` | Push to `main` | Dev builds → GitHub Packages, RC artifacts |
+| **Release** | `release.yml` | Manual dispatch | Ships RC from CI → NuGet.org |
+| **Bump Version** | `bump-version.yml` | Manual dispatch | Change version base or phase |
 | **PR** | `pr.yml` | Pull requests | Build verification |
 
-All workflows share a common build action (`.github/actions/build/`) for consistency.
+### Key Concepts
+
+- **CI builds both dev and RC packages** - Every push to main produces a dev package (pushed to GitHub Packages) and an RC package (stored as artifact)
+- **Release just ships** - The Release workflow downloads the RC package from CI and publishes it, no rebuild
+- **Bump Version for transitions** - Use the Bump Version workflow to change version base or move to a new phase
+
+## Version Script
+
+Version logic is centralized in `scripts/version.cs`, a C# file-based app with subcommands:
+
+```bash
+# Read version state from dev release
+dotnet scripts/version.cs -- state --body "$RELEASE_BODY"
+
+# Calculate dev and RC versions
+dotnet scripts/version.cs -- calculate --state "$STATE_JSON"
+
+# Advance state after shipping
+dotnet scripts/version.cs -- advance --state "$STATE_JSON" --shipped-version "0.0.1-pre.1.rel"
+
+# Bump version/phase
+dotnet scripts/version.cs -- bump --state "$STATE_JSON" --version-bump auto --phase rtm
+
+# Validate a version against shipped releases
+dotnet scripts/version.cs -- validate --version "0.0.1" --releases-json "$RELEASES"
+```
 
 ## Workflow Structure
-
-### Composite Action (`.github/actions/build/`)
-
-A reusable action that performs the common build steps:
-
-1. **Checkout** - Clone the repository with full history
-2. **Setup .NET** - Install .NET 10 SDK (preview)
-3. **Restore** - Restore NuGet packages
-4. **Build** - Build in Release configuration
-
-This action is used by all three workflows for consistency.
 
 ### CI Workflow (`ci.yml`)
 
 Runs automatically on every push to `main`:
 
-1. **Build** - Uses the composite action
-2. **Calculate version** - Determine dev version from state
-3. **Pack** - Create NuGet package with version
-4. **Upload artifact** - Store package
-5. **Push to GitHub Packages** - Publish dev package
-6. **Update dev draft release** - Store new version state
+1. **Calculate version** - Uses version script to determine dev and RC versions
+2. **Build dev package** - Build with dev version
+3. **Test** - Run unit tests
+4. **Pack dev package** - Create dev NuGet package
+5. **Build RC package** - Rebuild with RC version
+6. **Pack RC package** - Create RC NuGet package
+7. **Upload artifacts** - Store both `package` (dev) and `package-rc` (RC) artifacts
+8. **Push to GitHub Packages** - Publish dev package only
+9. **Update dev draft release** - Store version state and CI run ID
 
-If a release is pending (indicated by `pending_release` in state), the CI workflow skips publishing to avoid version conflicts.
+If a release is pending, the CI workflow skips publishing.
 
 ### Release Workflow (`release.yml`)
 
-Triggered manually via workflow dispatch:
+Triggered manually via workflow dispatch (no inputs required):
+
+1. **Get version state** - Read current state from dev release
+2. **Download RC package** - Get `package-rc` artifact from CI run
+3. **Verify version** - Ensure package version matches expected RC version
+4. **Push to NuGet.org** - Publish via trusted publishing
+5. **Create GitHub release** - Create release with package attached
+6. **Advance version state** - Auto-increment phase number or bump base version
+
+The release type (prerelease vs stable) is determined automatically from the current phase:
+- `pre` or `rc` phase → prerelease to NuGet
+- `rtm` phase → stable to NuGet
+
+### Bump Version Workflow (`bump-version.yml`)
+
+Triggered manually to change version base or phase:
 
 **Inputs:**
-- `release_type`: `prerelease`, `rtm`, or `stable` (required)
-- `version_bump`: `none`, `patch`, `minor`, or `major` (optional)
+- `version_bump`: `auto` (default), `patch`, `minor`, or `major`
+  - `auto`: Bumps version only if staying at same phase or moving backwards; no bump when advancing phase (pre→rc→rtm)
+- `phase`: `pre`, `rc`, or `rtm`
 
-**Jobs:**
+**What it does:**
+1. Validates the transition against shipped releases
+2. Updates version state
+3. Builds and publishes new dev/RC packages with the new version
 
-1. **Build job**:
-   - Uses the composite action
-   - Calculates release version
-   - Packs with version
-   - Updates dev release with pending state
-
-2. **Publish job** (for prerelease/stable):
-   - Downloads package artifact
-   - Pushes to NuGet.org via trusted publishing
-   - Creates GitHub release
-   - Confirms version state after success
-
-3. **Confirm-RTM job** (for rtm):
-   - Confirms RTM state (no NuGet publish needed)
+Use this workflow to:
+- Move from `pre` to `rc` or `rtm` phase
+- Bump to a new major, minor, or patch version
+- Both at once (e.g., bump major AND move to rtm)
 
 ### PR Workflow (`pr.yml`)
 
@@ -71,119 +98,104 @@ Runs on all pull requests:
 
 1. **Build** - Uses the composite action
 
-This ensures all PRs are buildable before merge. Tests will be added here when available.
+This ensures all PRs are buildable before merge.
 
 ## Versioning Scheme
 
-The project uses a custom versioning scheme that tracks state in a GitHub draft release.
-
 ### Version Format
 
-| Build Type | Format | Example |
-|------------|--------|---------|
-| Dev build (pre stage) | `{major}.{minor}.{patch}-pre.{pre}.dev.{dev}` | `0.0.1-pre.1.dev.5` |
-| Dev build (RTM stage) | `{major}.{minor}.{patch}-rtm.dev.{dev}` | `0.0.1-rtm.dev.3` |
-| Pre-release | `{major}.{minor}.{patch}-pre.{pre}.rel` | `0.0.1-pre.1.rel` |
-| Stable | `{major}.{minor}.{patch}` | `0.0.1` |
+| Phase | Dev Version | Shipped Version |
+|-------|-------------|-----------------|
+| pre | `0.0.1-pre.1.dev.5` | `0.0.1-pre.1.rel` |
+| rc | `0.0.1-rc.1.dev.3` | `0.0.1-rc.1.rel` |
+| rtm | `0.0.1-rtm.dev.2` | `0.0.1` |
 
 ### Version State
 
-Version state is stored in the body of a draft GitHub release named `dev`. The state is stored as an HTML comment:
+Version state is stored in the body of a draft GitHub release named `dev`:
 
 ```
-<!-- VERSION_STATE: {base_version}|{stage}|{pre_number}|{dev_number}|{pending_release} -->
+<!-- VERSION_STATE: {base}|{phase}|{phase_number}|{dev_number}|{pending} -->
+<!-- RC_VERSION: {rc_version} -->
+<!-- CI_RUN_ID: {run_id} -->
 ```
 
 Example: `<!-- VERSION_STATE: 0.0.1|pre|2|5|none -->`
 
 Fields:
-- **base_version**: The base semantic version (e.g., `0.0.1`)
-- **stage**: Either `pre` or `rtm`
-- **pre_number**: Current pre-release number
-- **dev_number**: Current dev build number within the pre-release
-- **pending_release**: `none`, `prerelease`, or `stable` (used for release retry handling)
+- **base**: The base semantic version (e.g., `0.0.1`)
+- **phase**: `pre`, `rc`, or `rtm`
+- **phase_number**: Current phase number (1, 2, 3...), 0 for rtm
+- **dev_number**: Current dev build number
+- **pending**: `none` or pending release type
 
-## Build Types
+## Release Phases
 
-### Development Builds (Automatic)
+### Pre Phase (default)
 
-Triggered automatically on every push to `main`.
+For early development and iteration:
+- Dev builds: `0.0.1-pre.1.dev.1`, `0.0.1-pre.1.dev.2`, ...
+- Shipped: `0.0.1-pre.1.rel`
+- After ship: phase number increments to `pre.2`
 
-**What happens:**
-1. Version is calculated from current state (incrementing `dev_number`)
-2. Package is built and packed
-3. Package is pushed to GitHub Packages
-4. Dev draft release is updated with new state
+### RC Phase (optional)
 
-**Version example progression:**
-- `0.0.1-pre.1.dev.1` → `0.0.1-pre.1.dev.2` → `0.0.1-pre.1.dev.3`
+For release candidates before stable:
+- Dev builds: `0.0.1-rc.1.dev.1`, `0.0.1-rc.1.dev.2`, ...
+- Shipped: `0.0.1-rc.1.rel`
+- After ship: phase number increments to `rc.2`
 
-**Installing dev builds:**
+### RTM Phase
+
+For preparing the stable release:
+- Dev builds: `0.0.1-rtm.dev.1`, `0.0.1-rtm.dev.2`, ...
+- Shipped: `0.0.1` (stable!)
+- After ship: base version bumps, phase resets to `pre.1`
+
+## Example Timeline
+
+1. Start: base=`0.0.1`, phase=`pre`, phase_number=1
+2. CI runs, produces `0.0.1-pre.1.dev.1` (dev) and `0.0.1-pre.1.rel` (RC)
+3. **Release** ships `0.0.1-pre.1.rel` → phase_number becomes 2
+4. CI runs, produces `0.0.1-pre.2.dev.1` and `0.0.1-pre.2.rel`
+5. **Release** ships `0.0.1-pre.2.rel` → phase_number becomes 3
+6. **Bump Version** with phase=`rtm` → triggers build of `0.0.1-rtm.dev.1` and `0.0.1`
+7. **Release** ships `0.0.1` → base becomes `0.0.2`, phase resets to `pre.1`
+
+## How to Release
+
+### Ship a Pre-release or Stable
+
+Simply run the **Release** workflow - no inputs needed:
+
 ```bash
-dotnet tool install --global dotnet-dev-certs-plus \
-  --version 0.0.1-pre.1.dev.5 \
-  --add-source https://nuget.pkg.github.com/DamianEdwards/index.json
+gh workflow run release.yml --repo DamianEdwards/dotnet-dev-certs-plus
 ```
 
-### Pre-releases (Manual)
+The workflow automatically:
+- Determines if it's a prerelease or stable based on current phase
+- Downloads the RC package from CI
+- Publishes to NuGet.org
+- Advances the version state
 
-Triggered via **Release** workflow dispatch with `release_type: prerelease`.
+### Change Phase or Version
 
-**What happens:**
-1. Version is set to `{base}-pre.{pre}.rel`
-2. Package is built and pushed to NuGet.org
-3. GitHub release is created (marked as pre-release)
-4. State is updated: `pre_number` increments, `dev_number` resets to 1
+Use the **Bump Version** workflow:
 
-**Version example:**
-- Before: `0.0.1-pre.1.dev.5`
-- Release: `0.0.1-pre.1.rel`
-- After: `0.0.1-pre.2.dev.1`
+```bash
+# Move to RTM phase (prepare for stable)
+gh workflow run bump-version.yml -f version_bump=none -f phase=rtm
 
-### RTM Stage (Manual)
+# Bump to next minor version
+gh workflow run bump-version.yml -f version_bump=minor -f phase=pre
 
-Triggered via **Release** workflow dispatch with `release_type: rtm`.
-
-**What happens:**
-1. Stage switches from `pre` to `rtm`
-2. Subsequent dev builds use RTM versioning
-
-**Version example:**
-- Before: `0.0.1-pre.3.dev.2`
-- After RTM: `0.0.1-rtm.dev.1` → `0.0.1-rtm.dev.2`
-
-This is useful when you're feature-complete and only doing bug fixes before stable release.
-
-### Stable Releases (Manual)
-
-Triggered via **Release** workflow dispatch with `release_type: stable`.
-
-**What happens:**
-1. Version is set to `{base}` (no suffix)
-2. Package is built and pushed to NuGet.org
-3. GitHub release is created (not marked as pre-release)
-4. State is updated: base version increments, resets to `pre.1.dev.1`
-
-**Version example:**
-- Before: `0.0.1-rtm.dev.3`
-- Release: `0.0.1`
-- After: `0.0.2-pre.1.dev.1`
-
-## Version Bumps
-
-You can bump the major, minor, or patch version using the `version_bump` input in the **Release** workflow.
-
-| Bump Type | Before | After |
-|-----------|--------|-------|
-| `patch` | `0.0.1` | `0.0.2` |
-| `minor` | `0.0.1` | `0.1.0` |
-| `major` | `0.1.0` | `1.0.0` |
-
-After a version bump, the state resets to `pre.1.dev.1`.
+# Bump major and go straight to RTM
+gh workflow run bump-version.yml -f version_bump=major -f phase=rtm
+```
 
 ## Trusted Publishing
 
-The workflow uses NuGet trusted publishing instead of API keys:
+The workflow uses NuGet trusted publishing:
 
 1. GitHub Actions requests an OIDC token
 2. Token is exchanged with NuGet.org for a temporary API key
@@ -194,85 +206,28 @@ The workflow uses NuGet trusted publishing instead of API keys:
 - `id-token: write` permission in the Release workflow
 - `nuget.org` environment configured in GitHub repository
 
-## Pending Release Handling
-
-To prevent version skips when a publish fails, the workflows use a "pending release" mechanism:
-
-1. **Release workflow** stores state with `pending_release` flag (e.g., `prerelease`)
-2. **CI workflow** detects pending state and skips dev builds
-3. **Publish job** (after success) updates state with incremented values and clears pending flag
-4. **If publish fails**, re-running the Release workflow detects the pending state and reuses the same version
-
-This ensures that a failed release can be retried without losing the version number.
-
-## How to Release
-
-### Pre-release
-
-1. Go to **Actions** → **Release** workflow
-2. Click **Run workflow**
-3. Select:
-   - Branch: `main`
-   - Release type: `prerelease`
-   - Version bump: `none` (or select bump if needed)
-4. Click **Run workflow**
-
-### Stable Release
-
-1. Optionally trigger RTM stage first (if not already in RTM)
-2. Go to **Actions** → **Release** workflow
-3. Click **Run workflow**
-4. Select:
-   - Branch: `main`
-   - Release type: `stable`
-   - Version bump: `none`
-5. Click **Run workflow**
-
-### Using the GitHub CLI
-
-You can also trigger releases from the command line using the [GitHub CLI](https://cli.github.com/):
-
-**Pre-release:**
-```bash
-gh workflow run release.yml -f release_type=prerelease -f version_bump=none --repo DamianEdwards/dotnet-dev-certs-plus
-```
-
-**Stable release:**
-```bash
-gh workflow run release.yml -f release_type=stable -f version_bump=none --repo DamianEdwards/dotnet-dev-certs-plus
-```
-
-**RTM stage:**
-```bash
-gh workflow run release.yml -f release_type=rtm -f version_bump=none --repo DamianEdwards/dotnet-dev-certs-plus
-```
-
-**Check workflow status:**
-```bash
-gh run list --workflow="release.yml" --repo DamianEdwards/dotnet-dev-certs-plus --limit 1
-```
-
-**Watch a run:**
-```bash
-gh run watch <run-id> --repo DamianEdwards/dotnet-dev-certs-plus
-```
-
 ## Troubleshooting
 
-### Publish job failed but NuGet push succeeded
+### Package version mismatch during release
 
-The Release workflow uses `--skip-duplicate` so you can safely re-run. The NuGet push will skip the existing package and continue to the state confirmation step.
+The release workflow verifies the RC package version matches the expected version. If they don't match:
+1. The version state may have been modified after the last CI run
+2. Run CI again or use Bump Version to synchronize
+
+### No RC artifact found
+
+Ensure CI ran successfully. The `package-rc` artifact is created by CI and is required for release.
+
+### Invalid phase transition
+
+The Bump Version workflow validates transitions against shipped releases. You cannot:
+- Go backwards in phase without bumping version (e.g., rtm → pre)
+- Ship a version less than or equal to an existing release
 
 ### Version state is wrong
 
-You can manually edit the dev draft release body to correct the `VERSION_STATE` comment. The format is:
-
-```
-<!-- VERSION_STATE: {major}.{minor}.{patch}|{stage}|{pre_number}|{dev_number}|{pending_release} -->
-```
+Manually edit the dev draft release body to correct the `VERSION_STATE` comment.
 
 ### No dev release exists
 
-If the dev draft release is missing, the workflows will:
-1. Look for the latest stable release to determine base version
-2. If no stable release exists, start from `0.0.1-pre.1.dev.1`
+Workflows will initialize from the latest stable release, or start from `0.0.1-pre.1.dev.1` if none exists.
