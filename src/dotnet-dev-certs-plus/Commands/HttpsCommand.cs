@@ -329,7 +329,7 @@ public static class HttpsCommand
         if (result.UpdateAvailable)
         {
             output.WriteLine($"A new version is available: {result.LatestVersion}");
-            DisplayUpdateInstructions(versionProvider, output);
+            DisplayUpdateInstructions(result.LatestVersion!, output);
         }
         else
         {
@@ -365,21 +365,21 @@ public static class HttpsCommand
         {
             Console.ResetColor();
         }
-        DisplayUpdateInstructions(versionProvider, output);
+        DisplayUpdateInstructions(availableVersion, output);
     }
 
-    private static void DisplayUpdateInstructions(IVersionInfoProvider versionProvider, OutputHelper output)
+    private static void DisplayUpdateInstructions(string targetVersion, OutputHelper output)
     {
-        var command = GetUpdateCommand(versionProvider);
+        var command = GetUpdateCommand(targetVersion);
         output.WriteError($"   Update with: {command}");
     }
 
     /// <summary>
-    /// Gets the appropriate update command based on the current build type.
+    /// Gets the appropriate update command based on the target version's build type.
     /// </summary>
-    internal static string GetUpdateCommand(IVersionInfoProvider versionProvider)
+    internal static string GetUpdateCommand(string targetVersion)
     {
-        var buildType = versionProvider.GetCurrentBuildType();
+        var buildType = VersionInfo.GetBuildType(targetVersion);
         return GetUpdateCommand(buildType);
     }
 
