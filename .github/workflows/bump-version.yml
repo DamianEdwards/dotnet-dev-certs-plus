@@ -95,11 +95,12 @@ jobs:
           echo "Dev version: $DEV_VERSION"
           echo "RC version: $RC_VERSION"
 
-          # Output version info
+          # Output version info (compact JSON to single line for GITHUB_OUTPUT)
+          NEW_STATE_JSON_COMPACT=$(echo "$NEW_STATE_JSON" | jq -c '.')
           echo "version=${DEV_VERSION}" >> $GITHUB_OUTPUT
           echo "rc_version=${RC_VERSION}" >> $GITHUB_OUTPUT
           echo "next_state=${NEXT_STATE}" >> $GITHUB_OUTPUT
-          echo "new_state_json=${NEW_STATE_JSON}" >> $GITHUB_OUTPUT
+          echo "new_state_json=${NEW_STATE_JSON_COMPACT}" >> $GITHUB_OUTPUT
 
           # Summary
           echo "## Version Bump" >> $GITHUB_STEP_SUMMARY

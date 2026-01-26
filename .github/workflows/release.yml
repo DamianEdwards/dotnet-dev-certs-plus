@@ -89,10 +89,11 @@ jobs:
             IS_PRERELEASE="true"
           fi
 
-          # Output
+          # Output (compact JSON to single line for GITHUB_OUTPUT)
+          STATE_JSON_COMPACT=$(echo "$STATE_JSON" | jq -c '.')
           echo "version=${RC_VERSION}" >> $GITHUB_OUTPUT
           echo "ci_run_id=${CI_RUN_ID}" >> $GITHUB_OUTPUT
-          echo "state_json=${STATE_JSON}" >> $GITHUB_OUTPUT
+          echo "state_json=${STATE_JSON_COMPACT}" >> $GITHUB_OUTPUT
           echo "is_prerelease=${IS_PRERELEASE}" >> $GITHUB_OUTPUT
           echo "phase=${PHASE}" >> $GITHUB_OUTPUT
 
