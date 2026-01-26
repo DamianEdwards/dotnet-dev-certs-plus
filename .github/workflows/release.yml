@@ -215,11 +215,12 @@ jobs:
       - name: Advance version state
         env:
           GH_TOKEN: ${{ github.token }}
+          STATE_JSON: ${{ steps.version.outputs.state_json }}
         run: |
           VERSION="${{ steps.version.outputs.version }}"
-          STATE_JSON="${{ steps.version.outputs.state_json }}"
 
           echo "Advancing version state after shipping $VERSION"
+          echo "Current state: $STATE_JSON"
 
           # Calculate next state
           NEW_STATE_JSON=$(dotnet scripts/version.cs -- advance --state "$STATE_JSON" --shipped-version "$VERSION")
