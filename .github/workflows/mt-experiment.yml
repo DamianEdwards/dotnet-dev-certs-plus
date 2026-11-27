@@ -1,0 +1,79 @@
+name: MSBuild performance experiment
+
+on:
+  push:
+    branches: [damianedwards-refactored-carnival]
+    paths: ['.github/workflows/mt-experiment.yml']
+
+permissions:
+  contents: read
+
+env:
+  DOTNET_NOLOGO: true
+  DOTNET_SKIP_FIRST_TIME_EXPERIENCE: true
+  DOTNET_CLI_TELEMETRY_OPTOUT: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          fetch-depth: 0
+      - name: Setup .NET
+        uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9
+        with:
+          dotnet-version: |
+            10.0.x
+            11.0.x
+      - name: Identify arm and SDK
+        run: |
+          dotnet --info
+          if (( GITHUB_RUN_ATTEMPT % 2 == 0 )); then
+            echo 'MT_FLAG=-mt' >> "$GITHUB_ENV"
+            echo 'Arm: -mt'
+          else
+            echo 'MT_FLAG=' >> "$GITHUB_ENV"
+            echo 'Arm: baseline'
+          fi
+      - name: Restore
+        run: dotnet restore
+      - name: Build dev
+        run: dotnet build --configuration Release --no-restore -p:Version=0.1.0-dev.1 -p:ContinuousIntegrationBuild=true $MT_FLAG
+      - name: Test
+        run: dotnet test test/dotnet-dev-certs-plus.Tests --configuration Release --no-build --verbosity normal --logger "trx;LogFileName=test-results.trx" --logger "html;LogFileName=test-results.html" --results-directory ./test-results
+      - name: Upload test results
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: test-results
+          path: |
+            ./test-results/*.trx
+            ./test-results/*.html
+          if-no-files-found: error
+      - name: Pack dev
+        run: dotnet pack src/dotnet-dev-certs-plus/dotnet-dev-certs-plus.csproj --configuration Release --no-build --output ./artifacts -p:PackageVersion=0.1.0-dev.1
+      - name: Setup .NET for RC
+        uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9
+        with:
+          dotnet-version: |
+            10.0.x
+            11.0.x
+      - name: Restore RC
+        run: dotnet restore
+      - name: Build RC
+        run: dotnet build --configuration Release --no-restore -p:Version=0.1.0-rc.1 -p:ContinuousIntegrationBuild=true $MT_FLAG
+      - name: Pack RC
+        run: dotnet pack src/dotnet-dev-certs-plus/dotnet-dev-certs-plus.csproj --configuration Release --no-build --output ./artifacts-rc -p:PackageVersion=0.1.0-rc.1
+      - name: Upload dev package
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: package
+          path: ./artifacts/*.nupkg
+          if-no-files-found: error
+      - name: Upload RC package
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: package-rc
+          path: ./artifacts-rc/*.nupkg
+          if-no-files-found: error
